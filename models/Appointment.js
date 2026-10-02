@@ -26,6 +26,7 @@ const appointmentSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    hasSaleEntry: { type: Boolean, default: false },
     status: {
         type: String,
         enum: ['Scheduled', 'Completed', 'Cancelled'],
