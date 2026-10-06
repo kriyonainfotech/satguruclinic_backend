@@ -15,13 +15,22 @@ const getDateFilter = (dateString) => {
 // 1. Create a new Task (supports single assignedTo ID, array of IDs, ALL_TEAM, or ALL_ADMIN)
 exports.createTask = async (req, res) => {
     try {
-        const { title, description, category, assignedTo, dueDate, priority } = req.body;
+        const { title, description, category, assignedTo, dueDate, dueDates, priority, checklistTemplate, checklistItems } = req.body;
         const currentUserId = req.user.userId;
         const currentUserRole = req.user.role;
+        
+        console.log('createTask payload:', JSON.stringify(req.body));
+        
+        if (!title) console.log('Missing title');
+        if (!assignedTo) console.log('Missing assignedTo:', assignedTo);
+        if (!dueDate && (!dueDates || dueDates.length === 0)) console.log('Missing dueDate/dueDates');
 
-        if (!title || !assignedTo || !dueDate) {
+        // Either dueDates (array) or dueDate must be provided
+        if (!title || !assignedTo || (!dueDate && (!dueDates || dueDates.length === 0))) {
             return res.status(400).json({ message: 'Title, Assigned User, and Due Date are required' });
         }
+
+        const datesToProcess = dueDates && dueDates.length > 0 ? dueDates : [dueDate];
 
         // Support ALL_TEAM, ALL_ADMIN, array of user IDs or single ID
         let targetIds = [];
@@ -46,6 +55,11 @@ exports.createTask = async (req, res) => {
             return res.status(400).json({ message: 'No valid assigned user IDs found' });
         }
 
+        const isBulk = datesToProcess.length > 1;
+        const bulkGroupId = isBulk ? new mongoose.Types.ObjectId().toString() : undefined;
+        const bulkStartDate = isBulk ? new Date(datesToProcess[0]) : undefined;
+        const bulkEndDate = isBulk ? new Date(datesToProcess[datesToProcess.length - 1]) : undefined;
+
         const createdTasks = [];
 
         for (const targetId of targetIds) {
@@ -53,38 +67,41 @@ exports.createTask = async (req, res) => {
             if (!targetUser) continue;
 
             // Permission check:
-            // Superadmin: can assign to superadmin, admin, or team
-            // Admin: can assign to team, or admin (including self)
-            // Team: can assign to self or admin, but NOT to other team members or superadmin
             if (currentUserRole === 'team') {
-                if (targetUser.role === 'team' && targetUser._id.toString() !== currentUserId.toString()) {
-                    continue;
-                }
-                if (targetUser.role === 'superadmin') {
-                    continue;
-                }
-            } else if (currentUserRole === 'admin' && targetUser.role === 'superadmin') {
-                continue;
+                if (targetUser.role === 'team' && targetUser._id.toString() !== currentUserId.toString()) continue;
+                if (targetUser.role === 'superadmin') continue;
+            } else if (currentUserRole === 'admin') {
+                if (targetUser.role === 'superadmin') continue;
+                if (targetUser.role === 'admin' && targetUser._id.toString() !== currentUserId.toString()) continue;
+                if (targetUser.role === 'team' && targetUser.adminId?.toString() !== currentUserId.toString()) continue;
             }
 
-            const task = new Task({
-                title,
-                description: description || '',
-                category: category || 'General',
-                assignedTo: targetId,
-                assignedBy: currentUserId,
-                dueDate: new Date(dueDate),
-                priority: priority || 'Medium',
-                status: 'Pending'
-            });
+            for (const d of datesToProcess) {
+                const task = new Task({
+                    title,
+                    description: description || '',
+                    category: category || 'General',
+                    assignedTo: targetId,
+                    assignedBy: currentUserId,
+                    dueDate: new Date(d),
+                    priority: priority || 'Medium',
+                    checklistTemplate: checklistTemplate || undefined,
+                    checklistItems: checklistItems || [],
+                    status: 'Pending',
+                    isBulkTask: isBulk,
+                    bulkGroupId,
+                    bulkStartDate,
+                    bulkEndDate
+                });
 
-            await task.save();
+                await task.save();
 
-            const populatedTask = await Task.findById(task._id)
-                .populate('assignedTo', 'name email role')
-                .populate('assignedBy', 'name email role');
+                const populatedTask = await Task.findById(task._id)
+                    .populate('assignedTo', 'name email role')
+                    .populate('assignedBy', 'name email role');
 
-            createdTasks.push(populatedTask);
+                createdTasks.push(populatedTask);
+            }
         }
 
         if (createdTasks.length === 0) {
@@ -115,23 +132,48 @@ exports.getTasks = async (req, res) => {
 
         // Role-based visibility
         if (currentUserRole === 'team') {
-            // Team members can NEVER see other team members' tasks!
             if (tab === 'admin') {
                 const adminUsers = await User.find({ role: 'admin' }).select('_id');
                 const adminIds = adminUsers.map(u => u._id);
                 query.assignedTo = { $in: adminIds };
             } else {
-                // On 'my', 'team', or any other tab, only show tasks assigned to this team member!
                 query.assignedTo = currentUserId;
             }
-        } else if (tab === 'my' || myTasks === 'true') {
-            query.assignedTo = currentUserId;
-        } else if (tab && ['superadmin', 'admin', 'team'].includes(tab)) {
-            const usersWithRole = await User.find({ role: tab }).select('_id');
-            const userIds = usersWithRole.map(u => u._id);
-            query.assignedTo = { $in: userIds };
-        } else if (assignedTo) {
+        } else if (currentUserRole === 'admin') {
+            if (tab === 'my' || myTasks === 'true') {
+                query.assignedTo = currentUserId;
+            } else if (tab === 'team') {
+                const myTeamUsers = await User.find({ role: 'team', adminId: currentUserId }).select('_id');
+                const myTeamIds = myTeamUsers.map(u => u._id);
+                query.assignedTo = { $in: myTeamIds };
+            } else {
+                // If admin tab or all tab or no tab is passed
+                query.assignedTo = currentUserId; // Default to self to prevent unauthorized viewing
+            }
+        } else {
+            // Superadmin logic
+            if (tab === 'my' || myTasks === 'true') {
+                query.assignedTo = currentUserId;
+            } else if (tab && ['superadmin', 'admin', 'team'].includes(tab)) {
+                const usersWithRole = await User.find({ role: tab }).select('_id');
+                const userIds = usersWithRole.map(u => u._id);
+                query.assignedTo = { $in: userIds };
+            }
+        }
+
+        // Additional filter
+        if (assignedTo && currentUserRole === 'superadmin') {
             query.assignedTo = assignedTo;
+        } else if (assignedTo && currentUserRole === 'admin') {
+            // Check if assignedTo belongs to admin's team or self
+            if (assignedTo.toString() === currentUserId.toString()) {
+                 query.assignedTo = assignedTo;
+            } else {
+                 const teamUser = await User.findOne({ _id: assignedTo, adminId: currentUserId });
+                 if (teamUser) query.assignedTo = assignedTo;
+            }
+        } else if (assignedTo && currentUserRole === 'team') {
+            if (assignedTo.toString() === currentUserId.toString()) query.assignedTo = assignedTo;
         }
 
         // Filter by category
@@ -225,22 +267,22 @@ exports.getAssignableUsers = async (req, res) => {
             query = role ? { role: role.toLowerCase() } : {};
         } else if (currentUserRole === 'admin') {
             if (role === 'admin') {
-                query = { role: 'admin' };
+                query = { _id: req.user.userId };
             } else if (role === 'team') {
-                query = { role: 'team' };
+                query = { role: 'team', adminId: req.user.userId };
             } else {
-                query = { role: { $in: ['admin', 'team'] } };
+                query = { $or: [{ _id: req.user.userId }, { role: 'team', adminId: req.user.userId }] };
             }
         } else if (currentUserRole === 'team') {
-            // Team members can only assign to self or admin, NOT other team members
+            const currentUser = await User.findById(req.user.userId);
             if (role === 'admin') {
-                query = { role: 'admin' };
+                query = currentUser.adminId ? { _id: currentUser.adminId } : { _id: null };
             } else if (role === 'team') {
                 query = { _id: req.user.userId };
             } else {
-                const adminUsers = await User.find({ role: 'admin' }).select('_id');
-                const adminIds = adminUsers.map(u => u._id);
-                query = { _id: { $in: [...adminIds, req.user.userId] } };
+                query = currentUser.adminId 
+                  ? { _id: { $in: [currentUser.adminId, req.user.userId] } }
+                  : { _id: req.user.userId };
             }
         } else {
             query = { _id: req.user.userId };
@@ -258,7 +300,7 @@ exports.getAssignableUsers = async (req, res) => {
 exports.updateTask = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, category, assignedTo, dueDate, status, priority } = req.body;
+        const { title, description, category, assignedTo, dueDate, status, priority, checklistTemplate, checklistItems } = req.body;
         const currentUserId = req.user.userId;
         const currentUserRole = req.user.role;
 
@@ -283,6 +325,53 @@ exports.updateTask = async (req, res) => {
             }
         }
 
+        
+        if (task.isBulkTask && task.bulkGroupId && req.body.bulkDueDates && req.body.bulkDueDates.length > 0) {
+            const newDueDates = req.body.bulkDueDates.map(d => new Date(d).toISOString().split('T')[0]);
+            const existingTasks = await Task.find({ bulkGroupId: task.bulkGroupId });
+            
+            const commonFields = {
+                title: title !== undefined ? title : task.title,
+                description: description !== undefined ? description : task.description,
+                category: category !== undefined ? category : task.category,
+                assignedTo: assignedTo !== undefined ? assignedTo : task.assignedTo,
+                priority: priority !== undefined ? priority : task.priority,
+            };
+
+            for (const existingTask of existingTasks) {
+                const existingDateStr = new Date(existingTask.dueDate).toISOString().split('T')[0];
+                if (!newDueDates.includes(existingDateStr)) {
+                    await Task.findByIdAndDelete(existingTask._id);
+                } else {
+                    await Task.findByIdAndUpdate(existingTask._id, {
+                        ...commonFields,
+                        bulkStartDate: new Date(req.body.bulkDueDates[0]),
+                        bulkEndDate: new Date(req.body.bulkDueDates[req.body.bulkDueDates.length - 1])
+                    });
+                }
+            }
+
+            const existingDateStrs = existingTasks.map(t => new Date(t.dueDate).toISOString().split('T')[0]);
+            const datesToCreate = newDueDates.filter(d => !existingDateStrs.includes(d));
+
+            for (const d of datesToCreate) {
+                const newTask = new Task({
+                    ...commonFields,
+                    assignedBy: currentUserId,
+                    dueDate: new Date(d),
+                    status: 'Pending',
+                    isBulkTask: true,
+                    bulkGroupId: task.bulkGroupId,
+                    bulkStartDate: new Date(req.body.bulkDueDates[0]),
+                    bulkEndDate: new Date(req.body.bulkDueDates[req.body.bulkDueDates.length - 1])
+                });
+                await newTask.save();
+            }
+
+            const updatedOriginal = await Task.findById(id).populate('assignedTo', 'name email role').populate('assignedBy', 'name email role');
+            return res.status(200).json({ message: 'Bulk task updated successfully', task: updatedOriginal || existingTasks[0] });
+        }
+
         if (title !== undefined) task.title = title;
         if (description !== undefined) task.description = description;
         if (category !== undefined) task.category = category;
@@ -290,6 +379,8 @@ exports.updateTask = async (req, res) => {
         if (dueDate !== undefined) task.dueDate = new Date(dueDate);
         if (status !== undefined) task.status = status;
         if (priority !== undefined) task.priority = priority;
+        if (checklistTemplate !== undefined) task.checklistTemplate = checklistTemplate;
+        if (checklistItems !== undefined) task.checklistItems = checklistItems;
 
         await task.save();
 
@@ -368,3 +459,7 @@ exports.deleteTask = async (req, res) => {
         res.status(500).json({ message: 'Error deleting task', error: error.message });
     }
 };
+
+
+
+

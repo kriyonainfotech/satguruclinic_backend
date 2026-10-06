@@ -23,7 +23,7 @@ const attendanceSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['present', 'half-day', 'leave', 'holiday', 'unpaid-holiday'],
+        enum: ['present', 'half-day', 'short-time', 'leave', 'holiday', 'unpaid-holiday'],
         default: 'present'
     },
     isManualOverride: {

@@ -3,6 +3,24 @@ const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const moment = require('moment');
 
+// Helper to calculate minutes between "HH:mm" strings
+const calculateScheduledMinutes = (timings) => {
+    let totalMinutes = 0;
+    if (!timings || timings.length === 0) return 480; // default 8 hours
+
+    timings.forEach(t => {
+        if (t.startTime && t.endTime) {
+            const start = moment(t.startTime, 'HH:mm');
+            let end = moment(t.endTime, 'HH:mm');
+            if (end.isBefore(start)) {
+                end.add(1, 'days'); // shift crosses midnight
+            }
+            totalMinutes += end.diff(start, 'minutes');
+        }
+    });
+    return totalMinutes > 0 ? totalMinutes : 480;
+};
+
 exports.getPayroll = async (req, res) => {
     try {
         const { month, year } = req.query; // format: MM, YYYY
@@ -30,7 +48,18 @@ exports.getPayroll = async (req, res) => {
             }
         });
         
-        const users = await User.find({ role: { $in: ['admin', 'team'] } }).select('-password');
+        let query = {};
+        const userRole = (req.user?.role || '').toLowerCase();
+        
+        if (userRole === 'admin') {
+            query = { adminId: req.user.userId };
+        } else if (userRole === 'superadmin') {
+            query = { role: { $in: ['admin', 'team'] } };
+        } else {
+            return res.status(403).json({ message: 'Unauthorized access to payroll' });
+        }
+        
+        const users = await User.find(query).select('-password');
         const attendanceRecords = await Attendance.find({
             date: {
                 $gte: startDate.format('YYYY-MM-DD'),
@@ -48,10 +77,46 @@ exports.getPayroll = async (req, res) => {
             let halfDay = 0;
             let leave = 0;
 
+            let totalHoursWorked = 0;
+            const standardDailyHours = calculateScheduledMinutes(user.timings) / 60;
+
             userAttendance.forEach(a => {
-                if (a.status === 'present') present++;
-                else if (a.status === 'half-day') halfDay++;
-                // holiday is ignored
+                let currentDayHours = 0;
+                let usedFallback = false;
+
+                // Calculate exact hours
+                if (a.clockIn) {
+                    const inTime = moment(a.clockIn);
+                    const outTime = a.clockOut ? moment(a.clockOut) : moment();
+                    const totalMinutes = outTime.diff(inTime, 'minutes');
+                    // Calculate hours in 15-minute slots, ignoring the uncompleted slot
+                    const hours = Math.floor(totalMinutes / 15) * 0.25;
+                    if (hours > 0) {
+                        currentDayHours = hours;
+                        totalHoursWorked += hours;
+                    }
+                } else if (a.status === 'present') {
+                    currentDayHours = standardDailyHours;
+                    totalHoursWorked += standardDailyHours; // fallback for full day
+                    usedFallback = true;
+                } else if (a.status === 'half-day') {
+                    currentDayHours = standardDailyHours / 2;
+                    totalHoursWorked += standardDailyHours / 2; // fallback for half day
+                    usedFallback = true;
+                }
+
+                // Dynamically update stats based on exact hours if clockOut is done
+                if (!usedFallback && currentDayHours > 0) {
+                    if (currentDayHours >= standardDailyHours * 0.75) {
+                        present++;
+                    } else if (currentDayHours >= standardDailyHours * 0.3) {
+                        halfDay++;
+                    }
+                    // if less than 30%, it is considered leave for stats purposes, but hours still paid
+                } else {
+                    if (a.status === 'present') present++;
+                    else if (a.status === 'half-day') halfDay++;
+                }
             });
             
             let officialHolidaysPassed = 0;
@@ -61,25 +126,25 @@ exports.getPayroll = async (req, res) => {
                 }
             });
 
-            // Any day not marked as present or half-day is a leave (since 365 days are working days)
+            // Any day not marked as present or half-day is a leave
             leave = Math.max(0, daysElapsed - present - halfDay - officialHolidaysPassed);
 
             const salary = user.salary || 0;
             const oneDaySalary = salary / daysInMonth;
+            const oneHourSalary = oneDaySalary / standardDailyHours; // Using user's standard working hours
             
-            // Paid days = Present + (0.5 * halfDay)
-            let extraPaidDaysFromHolidays = 0;
+            let holidayHours = 0;
             officialHolidays.forEach(h => {
                 const hasAttendanceForHoliday = userAttendance.some(a => a.date === h.date && (a.status==='present' || a.status==='half-day'));
                 if (h.isPaid && !hasAttendanceForHoliday) {
                     if (moment(h.date).isSameOrBefore(today, 'day')) {
-                        extraPaidDaysFromHolidays += (h.isHalfDay ? 0.5 : 1);
+                        holidayHours += (h.isHalfDay ? standardDailyHours / 2 : standardDailyHours);
                     }
                 }
             });
-            const paidDays = present + (0.5 * halfDay) + extraPaidDaysFromHolidays;
             
-            const earned = paidDays * oneDaySalary;
+            const paidHours = totalHoursWorked + holidayHours;
+            const earned = paidHours * oneHourSalary;
 
             totalPayroll += salary;
             accruedTillDate += earned;
@@ -98,9 +163,10 @@ exports.getPayroll = async (req, res) => {
                     present,
                     halfDay,
                     leave,
-                    paidHolidays: extraPaidDaysFromHolidays
+                    totalHoursWorked: Math.round(totalHoursWorked * 100) / 100,
+                    paidHolidays: holidayHours / standardDailyHours
                 },
-                totalDays: paidDays,
+                totalDays: Math.round((paidHours / standardDailyHours) * 100) / 100,
                 daysInMonth,
                 earned: Math.round(earned),
                 salary,
@@ -156,9 +222,43 @@ exports.getMyWallet = async (req, res) => {
         let halfDay = 0;
         let leave = 0;
 
+        let totalHoursWorked = 0;
+        const standardDailyHours = calculateScheduledMinutes(user.timings) / 60;
+
         attendanceRecords.forEach(a => {
-            if (a.status === 'present') present++;
-            else if (a.status === 'half-day') halfDay++;
+            let currentDayHours = 0;
+            let usedFallback = false;
+            
+            if (a.clockIn) {
+                const inTime = moment(a.clockIn);
+                const outTime = a.clockOut ? moment(a.clockOut) : moment();
+                const totalMinutes = outTime.diff(inTime, 'minutes');
+                // Calculate hours in 15-minute slots, ignoring the uncompleted slot
+                const hours = Math.floor(totalMinutes / 15) * 0.25;
+                if (hours > 0) {
+                    currentDayHours = hours;
+                    totalHoursWorked += hours;
+                }
+            } else if (a.status === 'present') {
+                currentDayHours = standardDailyHours;
+                totalHoursWorked += standardDailyHours;
+                usedFallback = true;
+            } else if (a.status === 'half-day') {
+                currentDayHours = standardDailyHours / 2;
+                totalHoursWorked += standardDailyHours / 2;
+                usedFallback = true;
+            }
+
+            if (!usedFallback && currentDayHours > 0) {
+                if (currentDayHours >= standardDailyHours * 0.75) {
+                    present++;
+                } else if (currentDayHours >= standardDailyHours * 0.3) {
+                    halfDay++;
+                }
+            } else {
+                if (a.status === 'present') present++;
+                else if (a.status === 'half-day') halfDay++;
+            }
         });
 
         let officialHolidaysPassed = 0;
@@ -172,21 +272,22 @@ exports.getMyWallet = async (req, res) => {
 
         const salary = user.salary || 0;
         const oneDaySalary = salary / daysInMonth;
+        const oneHourSalary = oneDaySalary / standardDailyHours;
         
+        let holidayHours = 0;
         let extraPaidDaysFromHolidays = 0;
         officialHolidays.forEach(h => {
             const hasAttendanceForHoliday = attendanceRecords.some(a => a.date === h.date && (a.status==='present' || a.status==='half-day'));
             if (h.isPaid && !hasAttendanceForHoliday) {
                 if (moment(h.date).isSameOrBefore(today, 'day')) {
+                    holidayHours += (h.isHalfDay ? standardDailyHours / 2 : standardDailyHours);
                     extraPaidDaysFromHolidays += (h.isHalfDay ? 0.5 : 1);
                 }
             }
         });
         
-        // Paid days = Present + (0.5 * halfDay) + Paid Holidays
-        const paidDays = present + (0.5 * halfDay) + extraPaidDaysFromHolidays;
-        
-        const earned = paidDays * oneDaySalary;
+        const paidHours = totalHoursWorked + holidayHours;
+        const earned = paidHours * oneHourSalary;
 
         res.json({
             earned: Math.round(earned),

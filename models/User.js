@@ -29,6 +29,7 @@ const userSchema = new mongoose.Schema({
         enum: ['superadmin', 'admin', 'team'],
         default: 'team'
     },
+    
     category: {
         type: String,
         required: false,
@@ -48,6 +49,7 @@ const userSchema = new mongoose.Schema({
         required: false,
         default: 0 // Monthly Salary
     },
+    googleCalendarTokens: { type: Object, default: null },
     adminId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',

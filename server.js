@@ -17,6 +17,7 @@ const authRoutes = require('./routes/authRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
 const settingRoutes = require('./routes/settingRoutes');
+const checklistRoutes = require('./routes/checklistRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
 const medicineRoutes = require('./routes/medicineRoutes');
 const packageRoutes = require('./routes/packageRoutes');
@@ -28,6 +29,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/settings', settingRoutes);
+app.use('/api/checklists', checklistRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/medicines', medicineRoutes);
 app.use('/api/packages', packageRoutes);
@@ -40,6 +42,9 @@ app.use('/api/holidays', require('./routes/holidayRoutes'));
 app.use('/api/invoices', require('./routes/invoiceRoutes'));
 app.use('/api/collections', require('./routes/collectionRoutes'));
 app.use('/api/expenses', require('./routes/expenseRoutes'));
+app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/leads', require('./routes/leadRoutes'));
+app.use('/api/calendar', require('./routes/calendarRoutes'));
 
 // Database initialization
 const initSuperAdmin = require('./utils/initSuperAdmin');
@@ -61,3 +66,4 @@ app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
 module.exports = app;
+

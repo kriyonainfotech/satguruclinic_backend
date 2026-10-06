@@ -10,8 +10,9 @@ const calculateScheduledMinutes = (timings) => {
 
     timings.forEach(t => {
         if (t.startTime && t.endTime) {
-            const start = moment(t.startTime, 'HH:mm');
-            let end = moment(t.endTime, 'HH:mm');
+            const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
+            const start = moment(t.startTime, timeFormats);
+            let end = moment(t.endTime, timeFormats);
             if (end.isBefore(start)) {
                 end.add(1, 'days'); // shift crosses midnight
             }
@@ -48,8 +49,9 @@ exports.clockIn = async (req, res) => {
         
         // Check if shift has already ended
         if (userTimings[shiftIndex]?.endTime) {
-            const shiftEnd = moment(`${today} ${userTimings[shiftIndex].endTime}`, 'YYYY-MM-DD HH:mm');
-            if (userTimings[shiftIndex].startTime && moment(userTimings[shiftIndex].endTime, 'HH:mm').isBefore(moment(userTimings[shiftIndex].startTime, 'HH:mm'))) {
+            const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
+            const shiftEnd = moment(`${today} ${userTimings[shiftIndex].endTime}`, timeFormats.map(f => `YYYY-MM-DD ${f}`));
+            if (userTimings[shiftIndex].startTime && moment(userTimings[shiftIndex].endTime, timeFormats).isBefore(moment(userTimings[shiftIndex].startTime, timeFormats))) {
                 shiftEnd.add(1, 'day'); // overnight shift
             }
             if (moment().isAfter(shiftEnd)) {
@@ -59,9 +61,10 @@ exports.clockIn = async (req, res) => {
             }
         }
 
-        // If 2nd shift (or shiftIndex > 0), check 5-minute rule before shift start:
-        if (shiftIndex > 0 && userTimings[shiftIndex]?.startTime) {
-            const shiftStart = moment(`${today} ${userTimings[shiftIndex].startTime}`, 'YYYY-MM-DD HH:mm');
+        // Check 5-minute rule before shift start:
+        if (userTimings[shiftIndex]?.startTime) {
+            const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
+            const shiftStart = moment(`${today} ${userTimings[shiftIndex].startTime}`, timeFormats.map(f => `YYYY-MM-DD ${f}`));
             const allowedTime = shiftStart.clone().subtract(5, 'minutes');
             const now = moment();
             if (now.isBefore(allowedTime)) {
@@ -152,11 +155,13 @@ exports.clockOut = async (req, res) => {
                 }
             });
 
-            // If worked > half of scheduled time, full day. Else half day.
-            if (totalWorkedMinutes > (scheduledMinutes / 2)) {
+            // Match stats thresholds: >= 75% = present, >= 30% = half-day, else short-time
+            if (totalWorkedMinutes >= (scheduledMinutes * 0.75)) {
                 attendance.status = 'present';
-            } else {
+            } else if (totalWorkedMinutes >= (scheduledMinutes * 0.3)) {
                 attendance.status = 'half-day';
+            } else {
+                attendance.status = 'short-time';
             }
         }
 
@@ -175,7 +180,7 @@ exports.getAttendanceList = async (req, res) => {
         const userRole = (req.user.role || '').toLowerCase();
         
         if (userRole === 'admin') {
-            query = { role: { $in: ['admin', 'team'] } };
+            query = { adminId: req.user.userId };
         } else if (userRole === 'superadmin') {
             query = { role: { $in: ['superadmin', 'admin', 'team'] } };
         } else {
@@ -320,7 +325,8 @@ exports.updateAttendanceStatus = async (req, res) => {
         if (clockIn !== undefined) {
             if (clockIn) {
                 if (typeof clockIn === 'string' && clockIn.includes(':') && !clockIn.includes('T')) {
-                    attendance.clockIn = moment(`${date} ${clockIn}`, 'YYYY-MM-DD HH:mm').toDate();
+                    const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
+            attendance.clockIn = moment(`${date} ${clockIn}`, timeFormats.map(f => `YYYY-MM-DD ${f}`)).toDate();
                 } else {
                     attendance.clockIn = new Date(clockIn);
                 }
@@ -333,7 +339,8 @@ exports.updateAttendanceStatus = async (req, res) => {
         if (clockOut !== undefined) {
             if (clockOut) {
                 if (typeof clockOut === 'string' && clockOut.includes(':') && !clockOut.includes('T')) {
-                    attendance.clockOut = moment(`${date} ${clockOut}`, 'YYYY-MM-DD HH:mm').toDate();
+                    const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
+                    attendance.clockOut = moment(`${date} ${clockOut}`, timeFormats.map(f => `YYYY-MM-DD ${f}`)).toDate();
                 } else {
                     attendance.clockOut = new Date(clockOut);
                 }

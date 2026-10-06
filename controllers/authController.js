@@ -56,7 +56,7 @@ const cleanMobileNumber = (mobile) => {
 
 // Naya user bananeka function (Admin ya Team ke liye)
 exports.registerUser = async (req, res) => {
-    let { name, email, password, role, mobile, birthDate, category, timingType, timings } = req.body;
+    let { name, email, password, role, mobile, birthDate, category, timingType, timings, adminId: reqAdminId } = req.body;
     if (name) name = name.trim();
 
     try {
@@ -87,7 +87,7 @@ exports.registerUser = async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        let adminId;
+        let adminId = reqAdminId;
         if (role === 'team' && req.user.role === 'admin') {
             adminId = req.user.userId;
         }
@@ -126,7 +126,11 @@ exports.getUsersByRole = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to view team' });
         }
 
-        const users = await User.find({ role }).select('-password');
+        const query = { role };
+        if (role === 'team' && req.user.role === 'admin') {
+            query.adminId = req.user.userId;
+        }
+        const users = await User.find(query).select('-password');
         res.json(users);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching users', error: error.message });
@@ -137,7 +141,8 @@ exports.getUsersByRole = async (req, res) => {
 exports.updateUser = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, mobile, email, birthDate, category, timingType, timings } = req.body;
+        console.log("UPDATE USER REQUEST: ", id, req.body);
+        const { name, mobile, email, birthDate, category, timingType, timings, adminId } = req.body;
 
         const userToUpdate = await User.findById(id);
         if (!userToUpdate) return res.status(404).json({ message: 'User not found' });
@@ -175,6 +180,10 @@ exports.updateUser = async (req, res) => {
         // Update birthDate (allow clearing it by sending null/empty string)
         if (birthDate !== undefined) {
             userToUpdate.birthDate = birthDate ? new Date(birthDate) : null;
+        }
+
+        if (adminId !== undefined && req.user.role === 'superadmin') {
+            userToUpdate.adminId = adminId || null;
         }
 
         await userToUpdate.save();
@@ -273,5 +282,15 @@ exports.getAllBirthdays = async (req, res) => {
         res.json(users);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching all birthdays', error: error.message });
+    }
+};
+
+
+exports.getAllUsers = async (req, res) => {
+    try {
+        const users = await User.find({}).select('-password');
+        res.json(users);
+    } catch (error) {
+        res.status(500).json({ message: 'Error fetching users', error: error.message });
     }
 };

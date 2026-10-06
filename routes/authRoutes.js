@@ -10,6 +10,9 @@ router.post('/login', authController.login);
 router.post('/register', authMiddleware, authController.registerUser);
 
 // GET /api/auth/users/:role -> Get users by role
+router.get('/users', authMiddleware, authController.getAllUsers);
+
+// GET /api/auth/users/:role -> Get users by role
 router.get('/users/:role', authMiddleware, authController.getUsersByRole);
 
 // PUT /api/auth/users/:id -> Update user

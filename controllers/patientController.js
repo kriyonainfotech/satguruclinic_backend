@@ -1,4 +1,4 @@
-﻿const Patient = require('../models/Patient');
+const Patient = require('../models/Patient');
 const User = require('../models/User');
 const Appointment = require('../models/Appointment');
 
@@ -46,8 +46,8 @@ exports.searchPatient = async (req, res) => {
 exports.addPatient = async (req, res) => {
     try {
         // Only Admin and Team can add patients
-        if (!['admin', 'team'].includes(req.user.role)) {
-            return res.status(403).json({ message: 'Only Admin and Team can add patients' });
+        if (!['superadmin', 'admin', 'team'].includes(req.user.role)) {
+            return res.status(403).json({ message: 'Not authorized to add patients' });
         }
 
         let adminId;
@@ -58,9 +58,9 @@ exports.addPatient = async (req, res) => {
             adminId = user ? (user.adminId || null) : null;
         }
 
-        // Generate patientId (e.g. PAT-1001)
+        // Generate patientId (e.g. PAT-01)
         const count = await Patient.countDocuments();
-        const patientId = `PAT-${1001 + count}`;
+        const patientId = `PAT-${String(count + 1).padStart(2, '0')}`;
 
         const newPatient = new Patient({
             ...req.body,

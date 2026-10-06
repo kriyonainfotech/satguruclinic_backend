@@ -32,7 +32,7 @@ exports.getSOPs = async (req, res) => {
 
         let query = {};
         
-        if (req.query.assignedOnly === 'true' || (fullUser.role !== 'superadmin' && fullUser.role !== 'admin')) {
+        if (req.query.assignedOnly === 'true' || fullUser.role === 'team') {
             // Filter SOPs to only those assigned to this specific user (by role, category, or user ID)
             const rolesToCheck = [fullUser.role.toLowerCase()];
             if (fullUser.category) {
@@ -45,6 +45,8 @@ exports.getSOPs = async (req, res) => {
                     { assignedUsers: fullUser._id }
                 ]
             };
+        } else if (fullUser.role === 'admin') {
+            query.createdBy = fullUser._id;
         }
         
         const sops = await SOP.find(query).populate('assignedUsers', 'name email').sort({ createdAt: -1 });

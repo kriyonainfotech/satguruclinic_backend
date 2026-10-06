@@ -26,10 +26,19 @@ const taskSchema = new mongoose.Schema({
         ref: 'User',
         required: [true, 'Assigner user is required']
     },
-    dueDate: {
-        type: Date,
-        required: [true, 'Due date is required']
+    dueDate: { type: Date, required: [true, 'Due date is required'] },
+    isBulkTask: { type: Boolean, default: false },
+    bulkGroupId: { type: String },
+    bulkStartDate: { type: Date },
+    bulkEndDate: { type: Date },
+    checklistTemplate: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'ChecklistTemplate'
     },
+    checklistItems: [{
+        text: String,
+        isCompleted: { type: Boolean, default: false }
+    }],
     status: {
         type: String,
         enum: ['Pending', 'In Progress', 'Completed', 'Overdue', 'Done'],
@@ -43,3 +52,5 @@ const taskSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 module.exports = mongoose.model('Task', taskSchema);
+
+
