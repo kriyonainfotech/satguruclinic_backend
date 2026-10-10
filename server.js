@@ -49,13 +49,24 @@ app.use('/api/calendar', require('./routes/calendarRoutes'));
 // Database initialization
 const initSuperAdmin = require('./utils/initSuperAdmin');
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI)
-.then(() => {
-    console.log('MongoDB Connected to satguruclinic');
-    initSuperAdmin(); // Jaise hi DB connect hoga, ye check karega aur superadmin banayega
-})
-.catch(err => console.log('MongoDB connection error:', err));
+
+let cachedDb = null;
+app.use(async (req, res, next) => {
+    if (mongoose.connection.readyState !== 1) {
+        try {
+            await mongoose.connect(process.env.MONGO_URI, {
+                serverSelectionTimeoutMS: 5000,
+                maxPoolSize: 10
+            });
+            console.log('MongoDB Connected to satguruclinic (Vercel Serverless)');
+            initSuperAdmin();
+        } catch (err) {
+            console.error('MongoDB connection error:', err);
+        }
+    }
+    next();
+});
+
 
 app.get('/', (req, res) => {
     res.send('Satguru Clinic Backend is running!');
