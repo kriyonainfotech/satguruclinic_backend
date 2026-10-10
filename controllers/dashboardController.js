@@ -8,6 +8,7 @@ const Appointment = require('../models/Appointment');
 const Task = require('../models/Task');
 const Attendance = require('../models/Attendance');
 const moment = require('moment');
+const { calculatePerformance } = require('../utils/performanceHelper');
 
 exports.getSuperadminDashboard = async (req, res) => {
     try {
@@ -69,24 +70,15 @@ exports.getSuperadminDashboard = async (req, res) => {
         }));
 
         // 7. Team Graph Data
-        const teamUsers = await User.find({ role: { $in: ['admin', 'team'] } });
+        const teamUsers = await User.find({ role: 'team' });
         
         const graphData = [];
         for (const user of teamUsers) {
             // Find all attendance records for this user
             const attendances = await Attendance.find({ userId: user._id });
-            const presentDays = attendances.filter(a => a.status === 'present').length;
-            const totalDays = attendances.length || 1;
-            const attendancePercent = Math.round((presentDays / totalDays) * 100);
-
-            // Fetch tasks assigned to this user
             const userTasks = await Task.find({ assignedTo: user._id });
-            const completedTasks = userTasks.filter(t => t.status === 'Completed' || t.status === 'Done').length;
-            const tasksPercent = userTasks.length ? Math.round((completedTasks / userTasks.length) * 100) : 100;
+            const { attendancePercent, punctualityPercent, tasksPercent } = calculatePerformance(user, attendances, userTasks);
             
-            // Punctuality dummy logic for now
-            const punctualityPercent = Math.max(0, attendancePercent - Math.floor(Math.random() * 10));
-
             graphData.push({
                 name: user.name,
                 attendance: attendancePercent,
@@ -116,6 +108,47 @@ exports.getSuperadminDashboard = async (req, res) => {
 
     } catch (error) {
         console.error('Superadmin dashboard error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+
+exports.getTeamMemberPerformance = async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        
+        const monthsData = [];
+        
+        for (let i = 5; i >= 0; i--) {
+            const startOfMonth = moment().subtract(i, 'months').startOf('month').toDate();
+            const endOfMonth = moment().subtract(i, 'months').endOf('month').toDate();
+            const monthLabel = moment().subtract(i, 'months').format('MMM YYYY');
+            
+            const attendances = await Attendance.find({ 
+                userId,
+                date: { $gte: startOfMonth, $lte: endOfMonth }
+            });
+            
+            const userTasks = await Task.find({ 
+                assignedTo: userId,
+                dueDate: { $gte: startOfMonth, $lte: endOfMonth }
+            });
+            
+            const { attendancePercent, punctualityPercent, tasksPercent } = calculatePerformance(user, attendances, userTasks);
+            
+            monthsData.push({
+                name: monthLabel,
+                attendance: attendancePercent,
+                punctuality: punctualityPercent,
+                tasks: tasksPercent
+            });
+        }
+        
+        res.json({ performanceGraph: monthsData });
+    } catch (error) {
+        console.error('Team performance error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 };

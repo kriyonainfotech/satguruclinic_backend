@@ -5,4 +5,6 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 router.get('/superadmin', authMiddleware, dashboardController.getSuperadminDashboard);
 
+router.get('/team-performance', authMiddleware, dashboardController.getTeamMemberPerformance);
+
 module.exports = router;

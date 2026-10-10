@@ -1,9 +1,23 @@
 const CompanyHoliday = require('../models/CompanyHoliday');
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
+const Task = require('../models/Task');
 const moment = require('moment');
+const { calculatePerformance } = require('../utils/performanceHelper');
 
 // Helper to calculate minutes between "HH:mm" strings
+const calculateShiftMinutes = (timings, shiftIndex) => {
+    if (!timings || timings.length <= shiftIndex) return null;
+    const t = timings[shiftIndex];
+    if (t.startTime && t.endTime) {
+        const start = moment(t.startTime, 'HH:mm');
+        let end = moment(t.endTime, 'HH:mm');
+        if (end.isBefore(start)) end.add(1, 'days');
+        return end.diff(start, 'minutes');
+    }
+    return null;
+};
+
 const calculateScheduledMinutes = (timings) => {
     let totalMinutes = 0;
     if (!timings || timings.length === 0) return 480; // default 8 hours
@@ -71,7 +85,7 @@ exports.getPayroll = async (req, res) => {
         let accruedTillDate = 0;
         const payrollDetails = [];
 
-        users.forEach(user => {
+        await Promise.all(users.map(async user => {
             const userAttendance = attendanceRecords.filter(a => a.userId.toString() === user._id.toString());
             let present = 0;
             let halfDay = 0;
@@ -85,16 +99,43 @@ exports.getPayroll = async (req, res) => {
                 let usedFallback = false;
 
                 // Calculate exact hours
-                if (a.clockIn) {
-                    const inTime = moment(a.clockIn);
-                    const outTime = a.clockOut ? moment(a.clockOut) : moment();
-                    const totalMinutes = outTime.diff(inTime, 'minutes');
-                    // Calculate hours in 15-minute slots, ignoring the uncompleted slot
-                    const hours = Math.floor(totalMinutes / 15) * 0.25;
-                    if (hours > 0) {
-                        currentDayHours = hours;
-                        totalHoursWorked += hours;
-                    }
+                              if (a.shifts && a.shifts.length > 0) {
+                  let totalDailyMinutes = 0;
+                  a.shifts.forEach(shift => {
+                      if (shift.clockIn) {
+                          const inTime = moment(shift.clockIn);
+                          const outTime = shift.clockOut ? moment(shift.clockOut) : moment();
+                          const shiftMinutes = outTime.diff(inTime, 'minutes');
+                          let shiftHours = Math.floor(shiftMinutes / 15) * 0.25;
+                                                    if (!shift.clockOut) {
+                              const shiftScheduledMins = calculateShiftMinutes(user.timings, shift.shiftIndex || 0);
+                              const shiftStandardHours = shiftScheduledMins ? shiftScheduledMins / 60 : (standardDailyHours / a.shifts.length);
+                              if (shiftHours > shiftStandardHours) {
+                                  shiftHours = shiftStandardHours;
+                              }
+                          }
+                          totalDailyMinutes += shiftMinutes;
+                      }
+                  });
+                  let hours = Math.floor(totalDailyMinutes / 15) * 0.25;
+                  const anyMissed = a.shifts.some(s => s.clockIn && !s.clockOut);
+                  if (anyMissed && hours > standardDailyHours) {
+                      hours = standardDailyHours;
+                  }
+                  if (hours > 0) {
+                      currentDayHours = hours;
+                      totalHoursWorked += hours;
+                  }
+              } else if (a.clockIn) {
+                  const inTime = moment(a.clockIn);
+                  const outTime = a.clockOut ? moment(a.clockOut) : moment();
+                  const totalMinutes = outTime.diff(inTime, 'minutes');
+                  let hours = Math.floor(totalMinutes / 15) * 0.25;
+                  if (!a.clockOut && hours > standardDailyHours) { hours = standardDailyHours; }
+                  if (hours > 0) {
+                      currentDayHours = hours;
+                      totalHoursWorked += hours;
+                  }
                 } else if (a.status === 'present') {
                     currentDayHours = standardDailyHours;
                     totalHoursWorked += standardDailyHours; // fallback for full day
@@ -149,8 +190,15 @@ exports.getPayroll = async (req, res) => {
             totalPayroll += salary;
             accruedTillDate += earned;
 
+            
+            const userTasks = await Task.find({ assignedTo: user._id });
+            const completedTasks = userTasks.filter(t => t.status === 'Completed' || t.status === 'Done').length;
+            const tasksPercent = userTasks.length ? Math.round((completedTasks / userTasks.length) * 100) : 100;
+            const { performanceScore } = calculatePerformance(user, userAttendance, userTasks);
+
             payrollDetails.push({
                 user: {
+                      performanceScore,
                     _id: user._id,
                     name: user.name,
                     email: user.email,
@@ -172,7 +220,7 @@ exports.getPayroll = async (req, res) => {
                 salary,
                 records: userAttendance
             });
-        });
+        }));
 
         res.json({
             summary: {
@@ -229,16 +277,43 @@ exports.getMyWallet = async (req, res) => {
             let currentDayHours = 0;
             let usedFallback = false;
             
-            if (a.clockIn) {
-                const inTime = moment(a.clockIn);
-                const outTime = a.clockOut ? moment(a.clockOut) : moment();
-                const totalMinutes = outTime.diff(inTime, 'minutes');
-                // Calculate hours in 15-minute slots, ignoring the uncompleted slot
-                const hours = Math.floor(totalMinutes / 15) * 0.25;
-                if (hours > 0) {
-                    currentDayHours = hours;
-                    totalHoursWorked += hours;
-                }
+                          if (a.shifts && a.shifts.length > 0) {
+                  let totalDailyMinutes = 0;
+                  a.shifts.forEach(shift => {
+                      if (shift.clockIn) {
+                          const inTime = moment(shift.clockIn);
+                          const outTime = shift.clockOut ? moment(shift.clockOut) : moment();
+                          const shiftMinutes = outTime.diff(inTime, 'minutes');
+                          let shiftHours = Math.floor(shiftMinutes / 15) * 0.25;
+                                                    if (!shift.clockOut) {
+                              const shiftScheduledMins = calculateShiftMinutes(user.timings, shift.shiftIndex || 0);
+                              const shiftStandardHours = shiftScheduledMins ? shiftScheduledMins / 60 : (standardDailyHours / a.shifts.length);
+                              if (shiftHours > shiftStandardHours) {
+                                  shiftHours = shiftStandardHours;
+                              }
+                          }
+                          totalDailyMinutes += shiftMinutes;
+                      }
+                  });
+                  let hours = Math.floor(totalDailyMinutes / 15) * 0.25;
+                  const anyMissed = a.shifts.some(s => s.clockIn && !s.clockOut);
+                  if (anyMissed && hours > standardDailyHours) {
+                      hours = standardDailyHours;
+                  }
+                  if (hours > 0) {
+                      currentDayHours = hours;
+                      totalHoursWorked += hours;
+                  }
+              } else if (a.clockIn) {
+                  const inTime = moment(a.clockIn);
+                  const outTime = a.clockOut ? moment(a.clockOut) : moment();
+                  const totalMinutes = outTime.diff(inTime, 'minutes');
+                  let hours = Math.floor(totalMinutes / 15) * 0.25;
+                  if (!a.clockOut && hours > standardDailyHours) { hours = standardDailyHours; }
+                  if (hours > 0) {
+                      currentDayHours = hours;
+                      totalHoursWorked += hours;
+                  }
             } else if (a.status === 'present') {
                 currentDayHours = standardDailyHours;
                 totalHoursWorked += standardDailyHours;
@@ -292,7 +367,7 @@ exports.getMyWallet = async (req, res) => {
         res.json({
             earned: Math.round(earned),
             target: salary,
-            stats: { present, halfDay, leave, paidHolidays: extraPaidDaysFromHolidays },
+            stats: { present, halfDay, leave, paidHolidays: extraPaidDaysFromHolidays, officialHolidaysPassed },
             progress: salary > 0 ? Math.round((earned / salary) * 100) : 0
         });
 
@@ -300,3 +375,7 @@ exports.getMyWallet = async (req, res) => {
         res.status(500).json({ message: 'Error fetching wallet data', error: error.message });
     }
 };
+
+
+
+

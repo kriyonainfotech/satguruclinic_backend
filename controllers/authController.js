@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { calculatePerformance } = require('../utils/performanceHelper');
 
 // Ye login function hai. Email aur password check karke token deta hai.
 exports.login = async (req, res) => {
@@ -130,7 +131,24 @@ exports.getUsersByRole = async (req, res) => {
         if (role === 'team' && req.user.role === 'admin') {
             query.adminId = req.user.userId;
         }
-        const users = await User.find(query).select('-password');
+                let users = await User.find(query).select('-password');
+        
+        if (role === 'team') {
+            const Attendance = require('../models/Attendance');
+            const Task = require('../models/Task');
+            
+            const usersWithScore = await Promise.all(users.map(async (u) => {
+                const userObj = u.toObject();
+                
+                const attendances = await Attendance.find({ userId: u._id });
+                const userTasks = await Task.find({ assignedTo: u._id });
+                const { performanceScore } = calculatePerformance(u, attendances, userTasks);
+                userObj.performanceScore = performanceScore;
+                
+                return userObj;
+            }));
+            return res.json(usersWithScore);
+        }
         res.json(users);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching users', error: error.message });
@@ -294,3 +312,4 @@ exports.getAllUsers = async (req, res) => {
         res.status(500).json({ message: 'Error fetching users', error: error.message });
     }
 };
+

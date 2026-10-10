@@ -1,12 +1,19 @@
 const mongoose = require('mongoose');
 
 const leadSchema = new mongoose.Schema({
+  date: {
+    type: Date,
+    default: Date.now
+  },
   fullName: {
     type: String,
     required: true,
   },
   email: {
     type: String,
+  },
+  birthdate: {
+    type: Date,
   },
   mobile: {
     type: String,

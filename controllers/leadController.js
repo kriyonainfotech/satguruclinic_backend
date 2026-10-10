@@ -3,7 +3,7 @@ const User = require('../models/User');
 
 const createLead = async (req, res) => {
     try {
-        const { fullName, email, mobile, status, source, assignedTo } = req.body;
+        const { fullName, email, mobile, status, source, assignedTo, date, nextFollowUp, birthdate } = req.body;
         const createdBy = req.user.userId;
         
         const creator = await User.findById(createdBy);
@@ -42,7 +42,10 @@ const createLead = async (req, res) => {
             source,
             assignedTo: finalAssignedTo,
             createdBy,
-            adminId
+            adminId,
+            date,
+            nextFollowUp,
+            birthdate
         });
 
         const savedLead = await newLead.save();
@@ -171,11 +174,33 @@ module.exports.getTodayReminders = async (req, res) => {
 
         let filter = { date: { $gte: today, $lt: tomorrow } };
         
-        let reminders = await LeadReminder.find(filter)
+        let remindersData = await LeadReminder.find(filter)
             .populate({
                 path: 'lead',
                 populate: { path: 'assignedTo createdBy adminId' }
             });
+            
+        let reminders = remindersData.map(r => r.toObject());
+
+        // Fetch leads that have nextFollowUp for today
+        let leadFilter = { nextFollowUp: { $gte: today, $lt: tomorrow } };
+        let leadsWithFollowup = await Lead.find(leadFilter)
+            .populate('assignedTo createdBy adminId');
+
+        const existingLeadIds = reminders.map(r => r.lead && r.lead._id ? r.lead._id.toString() : '');
+
+        leadsWithFollowup.forEach(lead => {
+            if (!existingLeadIds.includes(lead._id.toString())) {
+                reminders.push({
+                    _id: 'auto_' + lead._id.toString(),
+                    lead: lead.toObject(),
+                    type: 'Phone',
+                    date: lead.nextFollowUp,
+                    time: '12:00',
+                    remarks: 'Scheduled Follow-Up'
+                });
+            }
+        });
 
         if (role === 'admin') {
             reminders = reminders.filter(r => r.lead && (
@@ -231,3 +256,6 @@ module.exports.deleteReminder = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
+
+
+
