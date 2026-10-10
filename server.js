@@ -50,22 +50,34 @@ app.use('/api/calendar', require('./routes/calendarRoutes'));
 const initSuperAdmin = require('./utils/initSuperAdmin');
 
 
-let cachedDb = null;
-app.use(async (req, res, next) => {
-    if (mongoose.connection.readyState !== 1) {
-        try {
-            await mongoose.connect(process.env.MONGO_URI, {
-                serverSelectionTimeoutMS: 5000,
-                maxPoolSize: 10
-            });
-            console.log('MongoDB Connected to satguruclinic (Vercel Serverless)');
-            initSuperAdmin();
-        } catch (err) {
-            console.error('MongoDB connection error:', err);
-        }
-    }
-    next();
-});
+// Vercel Serverless MongoDB Connection
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected || mongoose.connection.readyState === 1) {
+    return;
+  }
+  
+  if (mongoose.connection.readyState === 2) {
+    // Already connecting, wait a bit or let Mongoose buffer
+    return;
+  }
+
+  try {
+    const db = await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+      maxPoolSize: 10
+    });
+    isConnected = db.connections[0].readyState;
+    console.log('MongoDB Connected (Vercel Serverless)');
+    initSuperAdmin();
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+  }
+};
+
+// Start connection process in global scope so it boots with the container
+connectDB();
 
 
 app.get('/', (req, res) => {
