@@ -7,9 +7,10 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
+// Middleware - allow up to 15mb for base64 live photo clock-in uploads
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
 // Routes
 const patientRoutes = require('./routes/patientRoutes');
@@ -45,10 +46,10 @@ app.use('/api/expenses', require('./routes/expenseRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/leads', require('./routes/leadRoutes'));
 app.use('/api/calendar', require('./routes/calendarRoutes'));
+app.use('/api/daily-reports', require('./routes/dailyReportRoutes'));
 
 // Database initialization
 const initSuperAdmin = require('./utils/initSuperAdmin');
-
 
 // Vercel Serverless MongoDB Connection
 let isConnected = false;
@@ -79,7 +80,6 @@ const connectDB = async () => {
 // Start connection process in global scope so it boots with the container
 connectDB();
 
-
 app.get('/', (req, res) => {
     res.send('Satguru Clinic Backend is running!');
 });
@@ -89,4 +89,3 @@ app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
 module.exports = app;
-

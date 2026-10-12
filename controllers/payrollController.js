@@ -2,6 +2,7 @@ const CompanyHoliday = require('../models/CompanyHoliday');
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const Task = require('../models/Task');
+const Expense = require('../models/Expense');
 const moment = require('moment');
 const { calculatePerformance } = require('../utils/performanceHelper');
 
@@ -81,8 +82,16 @@ exports.getPayroll = async (req, res) => {
             }
         });
 
+        // Find all salary expenses for this month/year
+        const salaryExpenses = await Expense.find({
+            category: 'Salary',
+            month: month,
+            year: year
+        });
+
         let totalPayroll = 0;
         let accruedTillDate = 0;
+        let totalPaid = 0;
         const payrollDetails = [];
 
         await Promise.all(users.map(async user => {
@@ -196,9 +205,14 @@ exports.getPayroll = async (req, res) => {
             const tasksPercent = userTasks.length ? Math.round((completedTasks / userTasks.length) * 100) : 100;
             const { performanceScore } = calculatePerformance(user, userAttendance, userTasks);
 
+            // Calculate how much has already been paid to this user for this month
+            const userSalaryExpenses = salaryExpenses.filter(e => e.employeeId && e.employeeId.toString() === user._id.toString());
+            const userPaid = userSalaryExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+            totalPaid += userPaid;
+
             payrollDetails.push({
                 user: {
-                      performanceScore,
+                    performanceScore,
                     _id: user._id,
                     name: user.name,
                     email: user.email,
@@ -218,6 +232,8 @@ exports.getPayroll = async (req, res) => {
                 daysInMonth,
                 earned: Math.round(earned),
                 salary,
+                paid: userPaid,
+                pendingAmount: Math.max(0, Math.round(earned) - userPaid),
                 records: userAttendance
             });
         }));
@@ -227,7 +243,7 @@ exports.getPayroll = async (req, res) => {
                 totalPayroll,
                 workingDays: daysInMonth, // or days excluding sundays if you want
                 accruedTillDate: Math.round(accruedTillDate),
-                totalPaid: 0 // Mock value for now
+                totalPaid: Math.round(totalPaid)
             },
             details: payrollDetails,
             officialHolidays
@@ -236,6 +252,44 @@ exports.getPayroll = async (req, res) => {
     } catch (error) {
         console.error('Payroll Error:', error);
         res.status(500).json({ message: 'Error fetching payroll data', error: error.message });
+    }
+};
+
+exports.disburseSalary = async (req, res) => {
+    try {
+        const { employeeId, amount, month, year, account, notes } = req.body;
+        if (!employeeId || !amount || !month || !year) {
+            return res.status(400).json({ message: 'Employee, amount, month and year are required' });
+        }
+
+        const employee = await User.findById(employeeId);
+        if (!employee) {
+            return res.status(404).json({ message: 'Employee not found' });
+        }
+
+        const monthName = moment(`${year}-${month}-01`).format('MMMM');
+        const formattedDate = moment().format('D MMM YYYY'); // Matches expense format e.g. "12 Oct 2026"
+
+        const newExpense = new Expense({
+            date: formattedDate,
+            party: `Salary - ${employee.name} (${monthName} ${year})`,
+            amount: Number(amount),
+            category: 'Salary',
+            account: account || 'Company Bank',
+            employeeId: employee._id,
+            month: String(month).padStart(2, '0'),
+            year: String(year),
+            notes: notes || `Salary payment for ${monthName} ${year}`
+        });
+
+        const savedExpense = await newExpense.save();
+        res.status(201).json({
+            message: 'Salary payment recorded in expenses successfully',
+            expense: savedExpense
+        });
+    } catch (error) {
+        console.error('Error disbursing salary:', error);
+        res.status(500).json({ message: 'Error disbursing salary', error: error.message });
     }
 };
 

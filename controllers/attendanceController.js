@@ -43,7 +43,13 @@ exports.clockIn = async (req, res) => {
     try {
         const today = moment().format('YYYY-MM-DD');
         const shiftIndex = parseInt(req.body.shiftIndex !== undefined ? req.body.shiftIndex : 0, 10);
+        const { photo, isMobile } = req.body;
         
+        // Team member requires live photo verification when clocking in via mobile device
+        if (req.user.role === 'team' && isMobile && !photo) {
+            return res.status(400).json({ message: 'Live photo verification is required to Clock In on mobile' });
+        }
+
         const user = await User.findById(req.user.userId);
         const userTimings = user?.timings || [];
         
@@ -95,15 +101,20 @@ exports.clockIn = async (req, res) => {
         if (!existingShift) {
             attendance.shifts.push({
                 shiftIndex,
-                clockIn: new Date()
+                clockIn: new Date(),
+                photo: photo || undefined
             });
         } else {
             existingShift.clockIn = new Date();
+            if (photo) existingShift.photo = photo;
         }
 
-        // Set primary clockIn if not set
+        // Set primary clockIn and photo if not set
         if (!attendance.clockIn) {
             attendance.clockIn = new Date();
+        }
+        if (photo && !attendance.photo) {
+            attendance.photo = photo;
         }
 
         await attendance.save();
@@ -180,9 +191,9 @@ exports.getAttendanceList = async (req, res) => {
         const userRole = (req.user.role || '').toLowerCase();
         
         if (userRole === 'admin') {
-            query = { adminId: req.user.userId };
+            query = { adminId: req.user.userId, role: { $ne: 'superadmin' } };
         } else if (userRole === 'superadmin') {
-            query = { role: { $in: ['superadmin', 'admin', 'team'] } };
+            query = { role: { $in: ['admin', 'team'] } };
         } else {
             return res.status(403).json({ message: 'Unauthorized access to attendance list' });
         }
@@ -306,7 +317,7 @@ exports.getAttendanceList = async (req, res) => {
 
 exports.updateAttendanceStatus = async (req, res) => {
     try {
-        const { userId, date, status, clockIn, clockOut } = req.body;
+        const { userId, date, status, clockIn, clockOut, photo } = req.body;
 
         let attendance = await Attendance.findOne({ userId, date });
         if (!attendance) {
@@ -314,10 +325,12 @@ exports.updateAttendanceStatus = async (req, res) => {
                 userId, 
                 date, 
                 status: status || 'present', 
+                photo: photo || undefined,
                 isManualOverride: true 
             });
         } else {
             if (status) attendance.status = status;
+            if (photo) attendance.photo = photo;
             attendance.isManualOverride = true;
         }
 
@@ -326,7 +339,7 @@ exports.updateAttendanceStatus = async (req, res) => {
             if (clockIn) {
                 if (typeof clockIn === 'string' && clockIn.includes(':') && !clockIn.includes('T')) {
                     const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
-            attendance.clockIn = moment(`${date} ${clockIn}`, timeFormats.map(f => `YYYY-MM-DD ${f}`)).toDate();
+                    attendance.clockIn = moment(`${date} ${clockIn}`, timeFormats.map(f => `YYYY-MM-DD ${f}`)).toDate();
                 } else {
                     attendance.clockIn = new Date(clockIn);
                 }

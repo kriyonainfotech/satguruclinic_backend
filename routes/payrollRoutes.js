@@ -5,5 +5,6 @@ const auth = require('../middleware/authMiddleware');
 
 router.get('/', auth, payrollController.getPayroll);
 router.get('/my-wallet', auth, payrollController.getMyWallet);
+router.post('/disburse', auth, payrollController.disburseSalary);
 
 module.exports = router;

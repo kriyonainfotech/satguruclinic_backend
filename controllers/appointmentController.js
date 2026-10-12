@@ -1,17 +1,28 @@
-﻿const Appointment = require('../models/Appointment');
+const Appointment = require('../models/Appointment');
 const User = require('../models/User');
 
 exports.getAppointments = async (req, res) => {
     try {
         let filter = {};
-        if (req.user.role === 'admin' || req.user.role === 'team') {
-            // Team and Admin cannot see each other's appointments, only their own
+        if (req.user.role === 'admin') {
+            // Admin can see their own appointments and appointments created by their team members
+            const myTeamMembers = await User.find({ adminId: req.user.userId }).select('_id');
+            const myTeamMemberIds = myTeamMembers.map(u => u._id);
+            const allowedUserIds = [req.user.userId, ...myTeamMemberIds];
+            filter.$or = [
+                { adminId: req.user.userId },
+                { createdBy: { $in: allowedUserIds } }
+            ];
+        } else if (req.user.role === 'team') {
+            // Team member sees their own appointments
             filter.createdBy = req.user.userId;
         }
+        // Superadmin has no role-based filter, so they can see all appointments (both admin and team)
 
         if (req.query.patientId) {
             // When fetching history from Patient DB, they can see all appointments for that patient regardless of creator
             delete filter.createdBy; 
+            delete filter.$or;
             filter.patientId = req.query.patientId;
         }
 
@@ -63,7 +74,6 @@ exports.updateAppointmentStatus = async (req, res) => {
         res.status(500).json({ message: err.message });
     }
 };
-
 
 exports.deleteAppointment = async (req, res) => {
     try {

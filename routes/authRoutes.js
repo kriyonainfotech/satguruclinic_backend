@@ -9,6 +9,19 @@ router.post('/login', authController.login);
 // POST /api/auth/register -> Admin/Team creation endpoint
 router.post('/register', authMiddleware, authController.registerUser);
 
+// GET /api/auth/me -> Verify active session and user validity
+router.get('/me', authMiddleware, (req, res) => {
+    res.json({
+        user: {
+            id: req.user.userId,
+            name: req.user.name,
+            email: req.user.email,
+            role: req.user.role,
+            category: req.user.category || ''
+        }
+    });
+});
+
 // GET /api/auth/users/:role -> Get users by role
 router.get('/users', authMiddleware, authController.getAllUsers);
 

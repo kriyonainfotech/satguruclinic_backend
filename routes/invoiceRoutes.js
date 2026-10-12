@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Invoice = require('../models/Invoice');
+const Collection = require('../models/Collection');
 const auth = require('../middleware/authMiddleware');
 
 router.get('/', auth, async (req, res) => {
@@ -34,7 +35,8 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
     try {
         await Invoice.findByIdAndDelete(req.params.id);
-        res.json({ message: 'Invoice deleted' });
+        await Collection.deleteMany({ invoiceId: req.params.id });
+        res.json({ message: 'Invoice and associated collections deleted' });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }

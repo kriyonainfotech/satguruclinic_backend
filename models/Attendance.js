@@ -13,8 +13,12 @@ const attendanceSchema = new mongoose.Schema({
     shifts: [{
         shiftIndex: { type: Number, default: 0 },
         clockIn: { type: Date },
-        clockOut: { type: Date }
+        clockOut: { type: Date },
+        photo: { type: String } // Live photo captured at clock in
     }],
+    photo: {
+        type: String // Primary photo
+    },
     clockIn: {
         type: Date
     },
