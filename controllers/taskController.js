@@ -12,6 +12,20 @@ const getDateFilter = (dateString) => {
     return { $gte: start, $lte: end };
 };
 
+// Senior ke juniors ki IDs (string array)
+const getJuniorIds = async (seniorId) => {
+    const juniors = await User.find({ role: 'team', seniorId }).select('_id');
+    return juniors.map(u => u._id.toString());
+};
+
+// Team member ye task manage kar sakta hai? (khud ka task ya uske junior ka task)
+const canTeamManageTask = async (task, currentUserId) => {
+    const assigneeId = task.assignedTo.toString();
+    if (assigneeId === currentUserId.toString()) return true;
+    const juniorIds = await getJuniorIds(currentUserId);
+    return juniorIds.includes(assigneeId);
+};
+
 // 1. Create a new Task (supports single assignedTo ID, array of IDs, ALL_TEAM, or ALL_ADMIN)
 exports.createTask = async (req, res) => {
     try {
@@ -68,7 +82,10 @@ exports.createTask = async (req, res) => {
 
             // Permission check:
             if (currentUserRole === 'team') {
-                if (targetUser.role === 'team' && targetUser._id.toString() !== currentUserId.toString()) continue;
+                // Team member khud ko ya apne junior ko hi task de sakta hai
+                if (targetUser.role === 'team'
+                    && targetUser._id.toString() !== currentUserId.toString()
+                    && targetUser.seniorId?.toString() !== currentUserId.toString()) continue;
                 if (targetUser.role === 'superadmin') continue;
             } else if (currentUserRole === 'admin') {
                 if (targetUser.role === 'superadmin') continue;
@@ -136,6 +153,10 @@ exports.getTasks = async (req, res) => {
                 const adminUsers = await User.find({ role: 'admin' }).select('_id');
                 const adminIds = adminUsers.map(u => u._id);
                 query.assignedTo = { $in: adminIds };
+            } else if (tab === 'team') {
+                // Senior ke juniors ke tasks
+                const juniorIds = await getJuniorIds(currentUserId);
+                query.assignedTo = { $in: juniorIds };
             } else {
                 query.assignedTo = currentUserId;
             }
@@ -173,7 +194,12 @@ exports.getTasks = async (req, res) => {
                  if (teamUser) query.assignedTo = assignedTo;
             }
         } else if (assignedTo && currentUserRole === 'team') {
-            if (assignedTo.toString() === currentUserId.toString()) query.assignedTo = assignedTo;
+            if (assignedTo.toString() === currentUserId.toString()) {
+                query.assignedTo = assignedTo;
+            } else {
+                const juniorIds = await getJuniorIds(currentUserId);
+                if (juniorIds.includes(assignedTo.toString())) query.assignedTo = assignedTo;
+            }
         }
 
         // Filter by category
@@ -275,20 +301,23 @@ exports.getAssignableUsers = async (req, res) => {
             }
         } else if (currentUserRole === 'team') {
             const currentUser = await User.findById(req.user.userId);
+            // Senior ho to apne juniors bhi assignable hain
+            const juniorIds = await getJuniorIds(req.user.userId);
+            const selfAndJuniors = [req.user.userId, ...juniorIds];
             if (role === 'admin') {
                 query = currentUser.adminId ? { _id: currentUser.adminId } : { _id: null };
             } else if (role === 'team') {
-                query = { _id: req.user.userId };
+                query = { _id: { $in: selfAndJuniors } };
             } else {
                 query = currentUser.adminId 
-                  ? { _id: { $in: [currentUser.adminId, req.user.userId] } }
-                  : { _id: req.user.userId };
+                  ? { _id: { $in: [currentUser.adminId, ...selfAndJuniors] } }
+                  : { _id: { $in: selfAndJuniors } };
             }
         } else {
             query = { _id: req.user.userId };
         }
 
-        const users = await User.find(query).select('name email role mobile');
+        const users = await User.find(query).select('name email role mobile teamLevel seniorId');
         res.json(users);
     } catch (error) {
         console.error('Error fetching assignable users:', error);
@@ -309,9 +338,9 @@ exports.updateTask = async (req, res) => {
             return res.status(404).json({ message: 'Task not found' });
         }
 
-        // Team members can only edit their own tasks
-        if (currentUserRole === 'team' && task.assignedTo.toString() !== currentUserId.toString()) {
-            return res.status(403).json({ message: 'Team members can only edit their own tasks' });
+        // Team members can only edit their own tasks (ya senior apne junior ke tasks)
+        if (currentUserRole === 'team' && !(await canTeamManageTask(task, currentUserId))) {
+            return res.status(403).json({ message: 'Team members can only edit their own or their juniors tasks' });
         }
 
         // If admin or team, check if assigning to superadmin
@@ -320,8 +349,10 @@ exports.updateTask = async (req, res) => {
             if (targetUser && targetUser.role === 'superadmin') {
                 return res.status(403).json({ message: 'Cannot assign tasks to Super Admin' });
             }
-            if (currentUserRole === 'team' && targetUser.role === 'team' && targetUser._id.toString() !== currentUserId.toString()) {
-                return res.status(403).json({ message: 'Team members cannot assign tasks to other team members' });
+            if (currentUserRole === 'team' && targetUser && targetUser.role === 'team'
+                && targetUser._id.toString() !== currentUserId.toString()
+                && targetUser.seniorId?.toString() !== currentUserId.toString()) {
+                return res.status(403).json({ message: 'Team members can only assign tasks to themselves or their juniors' });
             }
         }
 
@@ -412,8 +443,8 @@ exports.updateTaskStatus = async (req, res) => {
             return res.status(404).json({ message: 'Task not found' });
         }
 
-        // Team members can only update status of their own tasks
-        if (currentUserRole === 'team' && task.assignedTo.toString() !== currentUserId.toString()) {
+        // Team members can only update status of their own tasks (ya senior apne junior ke tasks)
+        if (currentUserRole === 'team' && !(await canTeamManageTask(task, currentUserId))) {
             return res.status(403).json({ message: 'Team members can only update status of their own tasks' });
         }
 
@@ -447,8 +478,8 @@ exports.deleteTask = async (req, res) => {
             return res.status(404).json({ message: 'Task not found' });
         }
 
-        // Team members can only delete their own tasks
-        if (currentUserRole === 'team' && task.assignedTo.toString() !== currentUserId.toString()) {
+        // Team members can only delete their own tasks (ya senior apne junior ke tasks)
+        if (currentUserRole === 'team' && !(await canTeamManageTask(task, currentUserId))) {
             return res.status(403).json({ message: 'Team members can only delete their own tasks' });
         }
 

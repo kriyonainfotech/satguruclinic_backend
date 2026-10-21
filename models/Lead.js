@@ -42,6 +42,22 @@ const leadSchema = new mongoose.Schema({
   },
   nextFollowUp: {
     type: Date,
+  },
+  // Lead kab convert (Won) hui - telecaller ka conversion bonus isi mahine me ginta hai
+  wonAt: {
+    type: Date,
+  },
+  // Lead bonus: lead convert (Won) karne wale telecaller ko fixed amount payroll me milta hai
+  bonusAdded: {
+    type: Boolean,
+    default: false,
+  },
+  bonusAmount: {
+    type: Number,
+    default: 0,
+  },
+  bonusAddedAt: {
+    type: Date,
   }
 }, { timestamps: true });
 

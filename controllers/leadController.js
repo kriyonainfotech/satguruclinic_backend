@@ -45,7 +45,8 @@ const createLead = async (req, res) => {
             adminId,
             date,
             nextFollowUp,
-            birthdate
+            birthdate,
+            wonAt: status === 'Won' ? new Date() : undefined
         });
 
         const savedLead = await newLead.save();
@@ -97,6 +98,27 @@ const updateLead = async (req, res) => {
             }
         }
         delete updateData._id; // Ensure _id is not in payload
+        // Lead bonus is only changed via the payroll lead-bonus endpoint
+        delete updateData.bonusAdded;
+        delete updateData.bonusAmount;
+        delete updateData.bonusAddedAt;
+        delete updateData.wonAt;
+
+        // Conversion date track karo (telecaller ka conversion bonus isi se ginta hai)
+        if (updateData.status !== undefined) {
+            const existingLead = await Lead.findById(req.params.id).select('status');
+            if (existingLead) {
+                if (updateData.status === 'Won' && existingLead.status !== 'Won') {
+                    updateData.wonAt = new Date();
+                } else if (updateData.status !== 'Won' && existingLead.status === 'Won') {
+                    // Lead ab converted nahi rahi - bonus bhi hata do
+                    updateData.wonAt = null;
+                    updateData.bonusAdded = false;
+                    updateData.bonusAmount = 0;
+                    updateData.bonusAddedAt = null;
+                }
+            }
+        }
         
         const updatedLead = await Lead.findByIdAndUpdate(req.params.id, updateData, { new: true });
         if (!updatedLead) return res.status(404).json({ message: 'Lead not found', id: req.params.id });

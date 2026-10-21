@@ -17,7 +17,8 @@ router.get('/me', authMiddleware, (req, res) => {
             name: req.user.name,
             email: req.user.email,
             role: req.user.role,
-            category: req.user.category || ''
+            category: req.user.category || '',
+            teamLevel: req.user.teamLevel || ''
         }
     });
 });

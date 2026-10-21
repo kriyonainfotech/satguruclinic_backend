@@ -50,35 +50,8 @@ exports.clockIn = async (req, res) => {
             return res.status(400).json({ message: 'Live photo verification is required to Clock In on mobile' });
         }
 
-        const user = await User.findById(req.user.userId);
-        const userTimings = user?.timings || [];
-        
-        // Check if shift has already ended
-        if (userTimings[shiftIndex]?.endTime) {
-            const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
-            const shiftEnd = moment(`${today} ${userTimings[shiftIndex].endTime}`, timeFormats.map(f => `YYYY-MM-DD ${f}`));
-            if (userTimings[shiftIndex].startTime && moment(userTimings[shiftIndex].endTime, timeFormats).isBefore(moment(userTimings[shiftIndex].startTime, timeFormats))) {
-                shiftEnd.add(1, 'day'); // overnight shift
-            }
-            if (moment().isAfter(shiftEnd)) {
-                return res.status(400).json({ 
-                    message: `Shift ${shiftIndex + 1} has already ended at ${shiftEnd.format('hh:mm A')}` 
-                });
-            }
-        }
-
-        // Check 5-minute rule before shift start:
-        if (userTimings[shiftIndex]?.startTime) {
-            const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
-            const shiftStart = moment(`${today} ${userTimings[shiftIndex].startTime}`, timeFormats.map(f => `YYYY-MM-DD ${f}`));
-            const allowedTime = shiftStart.clone().subtract(5, 'minutes');
-            const now = moment();
-            if (now.isBefore(allowedTime)) {
-                return res.status(400).json({ 
-                    message: `Shift ${shiftIndex + 1} Clock In opens at ${allowedTime.format('hh:mm A')} (5 mins before shift start)` 
-                });
-            }
-        }
+        // Clock In kabhi bhi ho sakta hai (shift se pehle ya baad). Jaldi aane / late jaane ka
+        // time payroll me clock-in se clock-out tak ke total time (15-min slot) me jud jata hai.
 
         let attendance = await Attendance.findOne({ userId: req.user.userId, date: today });
         if (!attendance) {
@@ -362,7 +335,37 @@ exports.updateAttendanceStatus = async (req, res) => {
             }
         }
 
-        if (status && ['present', 'half-day', 'leave', 'holiday', 'unpaid-holiday'].includes(status)) {
+        // Manual time ko shifts me bhi sync karo (payroll shifts se hi hours ginta hai)
+        if (clockIn !== undefined || clockOut !== undefined) {
+            if (!attendance.clockIn && !attendance.clockOut) {
+                attendance.shifts = [];
+            } else {
+                if (!attendance.shifts || attendance.shifts.length === 0) {
+                    attendance.shifts = [{ shiftIndex: 0, photo: attendance.photo || undefined }];
+                }
+                const sorted = [...attendance.shifts].sort((a, b) => (a.shiftIndex || 0) - (b.shiftIndex || 0));
+                const firstShift = sorted[0];
+                // Clock out last shift me jata hai jisme clock in hua ho (multi-shift me)
+                const lastShift = [...sorted].reverse().find(s => s.clockIn) || firstShift;
+                if (clockIn !== undefined) firstShift.clockIn = attendance.clockIn || undefined;
+                if (clockOut !== undefined) lastShift.clockOut = attendance.clockOut || undefined;
+            }
+
+            // Status nahi bheja to clock in / out ke time se calculate karo
+            if (!status && attendance.clockIn && attendance.clockOut) {
+                const user = await User.findById(userId).select('timings');
+                const scheduledMinutes = calculateScheduledMinutes(user?.timings);
+                let workedMinutes = 0;
+                attendance.shifts.forEach(s => {
+                    if (s.clockIn && s.clockOut) workedMinutes += moment(s.clockOut).diff(moment(s.clockIn), 'minutes');
+                });
+                if (workedMinutes >= scheduledMinutes * 0.75) attendance.status = 'present';
+                else if (workedMinutes >= scheduledMinutes * 0.3) attendance.status = 'half-day';
+                else attendance.status = 'short-time';
+            }
+        }
+
+        if (status && ['present', 'half-day', 'short-time', 'leave', 'holiday', 'unpaid-holiday'].includes(status)) {
             attendance.status = status;
         }
 

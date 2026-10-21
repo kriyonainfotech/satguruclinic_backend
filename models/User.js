@@ -54,6 +54,18 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: false // Only required for Team members, points to their Admin
+    },
+    // Team ke andar level: senior ya junior ('' matlab koi level set nahi)
+    teamLevel: {
+        type: String,
+        enum: ['', 'senior', 'junior'],
+        default: ''
+    },
+    // Junior kis senior ke under kaam karta hai (sirf junior ke liye)
+    seniorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null
     }
 }, { timestamps: true });
 

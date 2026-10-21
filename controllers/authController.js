@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -36,7 +37,8 @@ exports.login = async (req, res) => {
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                category: user.category || ''
+                category: user.category || '',
+                teamLevel: user.teamLevel || ''
             }
         });
     } catch (error) {
@@ -56,9 +58,27 @@ const cleanMobileNumber = (mobile) => {
     return cleaned.slice(0, 10);
 };
 
+// Junior ke liye senior validate karta hai. Valid ho to senior user return karta hai, warna { error, status }.
+const validateSenior = async (seniorId, reqUser, selfId) => {
+    if (!seniorId || !mongoose.Types.ObjectId.isValid(seniorId)) {
+        return { error: 'Please select a senior for the junior member', status: 400 };
+    }
+    if (selfId && seniorId.toString() === selfId.toString()) {
+        return { error: 'A member cannot be their own senior', status: 400 };
+    }
+    const senior = await User.findOne({ _id: seniorId, role: 'team', teamLevel: 'senior' });
+    if (!senior) {
+        return { error: 'Selected senior not found', status: 400 };
+    }
+    if (reqUser.role === 'admin' && senior.adminId?.toString() !== reqUser.userId.toString()) {
+        return { error: 'You can only select a senior from your own team', status: 403 };
+    }
+    return { senior };
+};
+
 // Naya user bananeka function (Admin ya Team ke liye)
 exports.registerUser = async (req, res) => {
-    let { name, email, password, role, mobile, birthDate, category, timingType, timings, adminId: reqAdminId } = req.body;
+    let { name, email, password, role, mobile, birthDate, category, timingType, timings, adminId: reqAdminId, teamLevel, seniorId } = req.body;
     if (name) name = name.trim();
 
     try {
@@ -94,6 +114,17 @@ exports.registerUser = async (req, res) => {
             adminId = req.user.userId;
         }
 
+        // Senior / Junior setup
+        const finalTeamLevel = role === 'team' && ['senior', 'junior'].includes(teamLevel) ? teamLevel : '';
+        let finalSeniorId = null;
+        if (finalTeamLevel === 'junior') {
+            const { senior, error, status } = await validateSenior(seniorId, req.user);
+            if (error) return res.status(status).json({ message: error });
+            finalSeniorId = senior._id;
+            // Junior hamesha apne senior ke admin ke under rahega
+            if (senior.adminId) adminId = senior.adminId;
+        }
+
         const newUser = new User({
             name,
             email,
@@ -105,6 +136,8 @@ exports.registerUser = async (req, res) => {
             salary: req.body.salary || 0,
             timingType: timingType || 'normal',
             timings: timings || [],
+            teamLevel: finalTeamLevel,
+            seniorId: finalSeniorId,
             ...(adminId && { adminId })
         });
 
@@ -161,7 +194,7 @@ exports.updateUser = async (req, res) => {
     try {
         const { id } = req.params;
         console.log("UPDATE USER REQUEST: ", id, req.body);
-        const { name, mobile, email, birthDate, category, timingType, timings, adminId } = req.body;
+        const { name, mobile, email, birthDate, category, timingType, timings, adminId, teamLevel, seniorId } = req.body;
 
         const userToUpdate = await User.findById(id);
         if (!userToUpdate) return res.status(404).json({ message: 'User not found' });
@@ -205,7 +238,30 @@ exports.updateUser = async (req, res) => {
             userToUpdate.adminId = adminId || null;
         }
 
+        // Senior / Junior update
+        let demotedFromSenior = false;
+        if (teamLevel !== undefined && userToUpdate.role === 'team') {
+            const newLevel = ['senior', 'junior'].includes(teamLevel) ? teamLevel : '';
+            demotedFromSenior = userToUpdate.teamLevel === 'senior' && newLevel !== 'senior';
+
+            if (newLevel === 'junior') {
+                const { senior, error, status } = await validateSenior(seniorId, req.user, userToUpdate._id);
+                if (error) return res.status(status).json({ message: error });
+                userToUpdate.seniorId = senior._id;
+                // Junior hamesha apne senior ke admin ke under rahega
+                if (senior.adminId) userToUpdate.adminId = senior.adminId;
+            } else {
+                userToUpdate.seniorId = null;
+            }
+            userToUpdate.teamLevel = newLevel;
+        }
+
         await userToUpdate.save();
+
+        // Senior ab senior nahi raha to uske juniors ko unassign kar do
+        if (demotedFromSenior) {
+            await User.updateMany({ seniorId: userToUpdate._id }, { $set: { seniorId: null } });
+        }
         res.json({ message: 'User updated successfully' });
     } catch (error) {
         res.status(500).json({ message: 'Error updating user', error: error.message });
@@ -227,6 +283,8 @@ exports.deleteUser = async (req, res) => {
         }
 
         await User.findByIdAndDelete(id);
+        // Deleted senior ke juniors ko unassign kar do
+        await User.updateMany({ seniorId: id }, { $set: { seniorId: null } });
         res.json({ message: 'User deleted successfully' });
     } catch (error) {
         res.status(500).json({ message: 'Error deleting user', error: error.message });

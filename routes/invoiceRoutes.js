@@ -15,7 +15,13 @@ router.get('/', auth, async (req, res) => {
 
 router.post('/', auth, async (req, res) => {
     try {
-        const newInvoice = new Invoice(req.body);
+        const newInvoice = new Invoice({
+            ...req.body,
+            createdBy: req.user.userId,
+            createdByName: req.user.name,
+            commissionAdded: false,
+            commissionAmount: 0
+        });
         const savedInvoice = await newInvoice.save();
         res.status(201).json(savedInvoice);
     } catch (err) {
@@ -25,7 +31,9 @@ router.post('/', auth, async (req, res) => {
 
 router.put('/:id', auth, async (req, res) => {
     try {
-        const updatedInvoice = await Invoice.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        // Commission fields are only changed via the payroll commission endpoint
+        const { createdBy, createdByName, commissionAdded, commissionAmount, commissionAddedAt, ...updates } = req.body;
+        const updatedInvoice = await Invoice.findByIdAndUpdate(req.params.id, updates, { new: true });
         res.json(updatedInvoice);
     } catch (err) {
         res.status(400).json({ message: err.message });

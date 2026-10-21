@@ -36,7 +36,9 @@ const authMiddleware = async (req, res, next) => {
             email: user.email,
             role: user.role,
             category: user.category || '',
-            adminId: user.adminId
+            adminId: user.adminId,
+            teamLevel: user.teamLevel || '',
+            seniorId: user.seniorId
         };
         next();
     } catch (err) {
