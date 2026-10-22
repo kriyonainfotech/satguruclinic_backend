@@ -17,12 +17,10 @@ const patientSchema = new mongoose.Schema({
         required: true
     },
     dateOfBirth: {
-        type: Date,
-        required: true
+        type: Date
     },
     age: {
-        type: Number,
-        required: true
+        type: Number
     },
     mobileNumber: {
         type: String,
@@ -32,6 +30,9 @@ const patientSchema = new mongoose.Schema({
         type: String
     },
     address: {
+        type: String
+    },
+    seatNumber: {
         type: String
     },
 

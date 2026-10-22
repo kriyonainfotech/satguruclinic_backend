@@ -13,6 +13,10 @@ const appointmentSchema = new mongoose.Schema({
     timeSlot: {
         type: String,
     },
+    seatNumber: {
+        type: String,
+        default: ''
+    },
     reason: {
         type: String,
         default: 'General Consultation'

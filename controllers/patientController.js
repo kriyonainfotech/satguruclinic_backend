@@ -13,8 +13,14 @@ exports.getPatients = async (req, res) => {
                                       .sort({ createdAt: -1 })
                                       .lean();
                                       
+        // Appointment count is shared by all patients on the same mobile number
+        const idsByMobile = {};
+        patients.forEach(p => {
+            (idsByMobile[p.mobileNumber] = idsByMobile[p.mobileNumber] || []).push(p._id);
+        });
         const patientsWithCounts = await Promise.all(patients.map(async (p) => {
-            const count = await Appointment.countDocuments({ patientId: p._id });
+            const ids = p.mobileNumber ? idsByMobile[p.mobileNumber] : [p._id];
+            const count = await Appointment.countDocuments({ patientId: { $in: ids } });
             return { ...p, appointmentCount: count };
         }));
 
@@ -31,6 +37,12 @@ exports.searchPatient = async (req, res) => {
         if (!mobile) return res.status(400).json({ message: 'Mobile number required' });
 
         let filter = { mobileNumber: mobile }; // No role filter
+
+        // ?all=1 -> return every patient registered on this number
+        if (req.query.all) {
+            const patients = await Patient.find(filter).sort({ createdAt: -1 });
+            return res.status(200).json(patients);
+        }
 
         const patient = await Patient.findOne(filter);
         if (patient) {
@@ -93,6 +105,23 @@ exports.updatePatient = async (req, res) => {
             const user = await User.findById(req.user.userId);
             if (patient.adminId.toString() !== user.adminId?.toString()) {
                 return res.status(403).json({ message: 'Not authorized to edit this patient' });
+            }
+        }
+
+        // Keep age in sync with DOB (DOB is optional, so clear age if DOB removed)
+        if ('dateOfBirth' in req.body) {
+            if (req.body.dateOfBirth) {
+                const today = new Date();
+                const birthDate = new Date(req.body.dateOfBirth);
+                let age = today.getFullYear() - birthDate.getFullYear();
+                const m = today.getMonth() - birthDate.getMonth();
+                if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                    age--;
+                }
+                req.body.age = age;
+            } else {
+                req.body.dateOfBirth = null;
+                req.body.age = null;
             }
         }
 

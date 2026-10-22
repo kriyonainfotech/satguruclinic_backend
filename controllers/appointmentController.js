@@ -1,28 +1,17 @@
 const Appointment = require('../models/Appointment');
 const User = require('../models/User');
+const Patient = require('../models/Patient');
 
 exports.getAppointments = async (req, res) => {
     try {
+        // Everyone (superadmin, admin, team) sees all appointments, regardless of who created them
         let filter = {};
-        if (req.user.role === 'admin') {
-            // Admin can see their own appointments and appointments created by their team members
-            const myTeamMembers = await User.find({ adminId: req.user.userId }).select('_id');
-            const myTeamMemberIds = myTeamMembers.map(u => u._id);
-            const allowedUserIds = [req.user.userId, ...myTeamMemberIds];
-            filter.$or = [
-                { adminId: req.user.userId },
-                { createdBy: { $in: allowedUserIds } }
-            ];
-        } else if (req.user.role === 'team') {
-            // Team member sees their own appointments
-            filter.createdBy = req.user.userId;
-        }
-        // Superadmin has no role-based filter, so they can see all appointments (both admin and team)
 
-        if (req.query.patientId) {
-            // When fetching history from Patient DB, they can see all appointments for that patient regardless of creator
-            delete filter.createdBy; 
-            delete filter.$or;
+        if (req.query.mobile) {
+            // History for a mobile number: appointments of every patient sharing this number
+            const samePhonePatients = await Patient.find({ mobileNumber: req.query.mobile }).select('_id');
+            filter.patientId = { $in: samePhonePatients.map(p => p._id) };
+        } else if (req.query.patientId) {
             filter.patientId = req.query.patientId;
         }
 
@@ -37,7 +26,7 @@ exports.getAppointments = async (req, res) => {
         const appointments = await Appointment.find(filter)
             .populate('patientId', 'fullName mobileNumber patientId age gender')
             .populate('createdBy', 'name role')
-            .sort({ appointmentDate: 1 });
+            .sort({ appointmentDate: 1, createdAt: 1 }); // timeline order
         res.status(200).json(appointments);
     } catch (err) {
         res.status(500).json({ message: err.message });
