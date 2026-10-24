@@ -2,6 +2,30 @@ const Attendance = require('../models/Attendance');
 const User = require('../models/User');
 const CompanyHoliday = require('../models/CompanyHoliday');
 const moment = require('moment');
+const { getUserPermissions, checkPermission } = require('../utils/permissions');
+const { runPhotoCleanup } = require('../utils/photoCleanup');
+
+// Selfie photo hata do (jinko 'attendance:photos' permission nahi hai)
+const stripPhotos = (records) => records.map(r => {
+    const obj = r && r.toObject ? r.toObject() : { ...r };
+    delete obj.photo;
+    if (Array.isArray(obj.shifts)) {
+        obj.shifts = obj.shifts.map(sh => {
+            const shObj = sh && sh.toObject ? sh.toObject() : { ...sh };
+            delete shObj.photo;
+            return shObj;
+        });
+    }
+    return obj;
+});
+
+// Team member ko kin users ki attendance dikhe: 'view-team' on ho to apne admin ki poori team, warna sirf khud
+const getTeamScopeQuery = (reqUser, permissions) => {
+    if (checkPermission(permissions, 'attendance:view-team') && reqUser.adminId) {
+        return { adminId: reqUser.adminId, role: 'team' };
+    }
+    return { _id: reqUser.userId };
+};
 
 // Helper to calculate minutes between "HH:mm" strings
 const calculateScheduledMinutes = (timings) => {
@@ -41,6 +65,7 @@ exports.getTodayStatus = async (req, res) => {
 
 exports.clockIn = async (req, res) => {
     try {
+        await runPhotoCleanup();
         const today = moment().format('YYYY-MM-DD');
         const shiftIndex = parseInt(req.body.shiftIndex !== undefined ? req.body.shiftIndex : 0, 10);
         const { photo, isMobile } = req.body;
@@ -158,18 +183,28 @@ exports.clockOut = async (req, res) => {
 
 exports.getAttendanceList = async (req, res) => {
     try {
+        // 7 din se purani selfie photos hatao (har 6 ghante me ek baar)
+        await runPhotoCleanup();
         const { date, startDate, endDate } = req.query; // date for daily view, startDate/endDate for calendar view
         
         let query = {};
         const userRole = (req.user.role || '').toLowerCase();
-        
+        const permissions = await getUserPermissions(req.user);
+
+        if (!checkPermission(permissions, 'attendance')) {
+            return res.status(403).json({ message: 'Unauthorized access to attendance list' });
+        }
+
         if (userRole === 'admin') {
             query = { adminId: req.user.userId, role: { $ne: 'superadmin' } };
         } else if (userRole === 'superadmin') {
             query = { role: { $in: ['admin', 'team'] } };
         } else {
-            return res.status(403).json({ message: 'Unauthorized access to attendance list' });
+            query = getTeamScopeQuery(req.user, permissions);
         }
+
+        const canSeePhotos = checkPermission(permissions, 'attendance:photos');
+        const send = (records) => res.json(canSeePhotos ? records : stripPhotos(records));
 
         const users = await User.find(query).select('name email role category timingType timings');
         const userIds = users.map(u => u._id);
@@ -242,7 +277,7 @@ exports.getAttendanceList = async (req, res) => {
             });
 
             enriched.sort((a, b) => b.date.localeCompare(a.date) || a.user.name.localeCompare(b.user.name));
-            return res.json(enriched);
+            return send(enriched);
         }
 
         // For a single date view, fill in 'leave' for users who didn't clock in
@@ -279,10 +314,10 @@ exports.getAttendanceList = async (req, res) => {
                     }
                 };
             });
-            return res.json(enrichedRecords);
+            return send(enrichedRecords);
         }
 
-        res.json(attendanceRecords);
+        send(attendanceRecords);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching attendance', error: error.message });
     }
@@ -291,6 +326,21 @@ exports.getAttendanceList = async (req, res) => {
 exports.updateAttendanceStatus = async (req, res) => {
     try {
         const { userId, date, status, clockIn, clockOut, photo } = req.body;
+
+        const permissions = await getUserPermissions(req.user);
+        if (!checkPermission(permissions, 'attendance:edit')) {
+            return res.status(403).json({ message: 'Aapko attendance edit karne ki permission nahi hai' });
+        }
+        // Team member sirf apne scope (khud / apni team) ki attendance edit kar sakta hai
+        if (req.user.role === 'team') {
+            const scope = getTeamScopeQuery(req.user, permissions);
+            const allowed = scope._id
+                ? String(userId) === String(req.user.userId)
+                : await User.exists({ ...scope, _id: userId });
+            if (!allowed) {
+                return res.status(403).json({ message: 'Aap is user ki attendance edit nahi kar sakte' });
+            }
+        }
 
         let attendance = await Attendance.findOne({ userId, date });
         if (!attendance) {

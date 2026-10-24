@@ -7,6 +7,9 @@ const Invoice = require('../models/Invoice');
 const Lead = require('../models/Lead');
 const moment = require('moment');
 const { calculatePerformance } = require('../utils/performanceHelper');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 // Commission given to the team member on the total of every sale they make
 const COMMISSION_RATE = 0.05;
@@ -346,6 +349,7 @@ exports.getPayroll = async (req, res) => {
 
 exports.disburseSalary = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'payroll:pay'))) return denied(res);
         const { employeeId, amount, month, year, account, notes } = req.body;
         if (!employeeId || !amount || !month || !year) {
             return res.status(400).json({ message: 'Employee, amount, month and year are required' });
@@ -542,6 +546,7 @@ exports.toggleSaleCommission = async (req, res) => {
         if (!['admin', 'superadmin'].includes(userRole)) {
             return res.status(403).json({ message: 'Only admin can add sales commission' });
         }
+        if (!(await hasPermission(req.user, 'payroll:incentives'))) return denied(res);
 
         const invoice = await Invoice.findById(req.params.invoiceId);
         if (!invoice) return res.status(404).json({ message: 'Sale not found' });
@@ -576,6 +581,7 @@ exports.toggleLeadBonus = async (req, res) => {
         if (!['admin', 'superadmin'].includes(userRole)) {
             return res.status(403).json({ message: 'Only admin can add lead bonus' });
         }
+        if (!(await hasPermission(req.user, 'payroll:incentives'))) return denied(res);
 
         const lead = await Lead.findById(req.params.leadId);
         if (!lead) return res.status(404).json({ message: 'Lead not found' });

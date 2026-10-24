@@ -3,6 +3,7 @@ const router = express.Router();
 const CallLog = require('../models/CallLog');
 const Patient = require('../models/Patient');
 const authMiddleware = require('../middleware/authMiddleware');
+const { hasPermission } = require('../utils/permissions');
 
 // Create a call log
 router.post('/', authMiddleware, async (req, res) => {
@@ -34,8 +35,8 @@ router.get('/', authMiddleware, async (req, res) => {
       const endDate = new Date(year, month, 0, 23, 59, 59);
       query.date = { $gte: startDate, $lte: endDate };
     }
-    // If team member, only show their logs
-    if (req.user.role === 'team' || req.query.view === 'my') {
+    // Sabke logs sirf 'call-logs:view-all' permission walo ko, baaki ko sirf apne
+    if (req.query.view === 'my' || !(await hasPermission(req.user, 'call-logs:view-all'))) {
       query.teamMember = req.user.userId;
     }
     const logs = await CallLog.find(query).populate('patient', 'fullName mobileNumber patientId').populate('teamMember', 'name role').sort({ date: -1 });
@@ -76,7 +77,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const log = await CallLog.findById(req.params.id);
     if (!log) return res.status(404).json({ message: 'Not found' });
-    if (log.teamMember.toString() !== req.user.userId && req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+    // Apna log koi bhi delete kar sakta hai, dusron ka sirf 'call-logs:delete' permission se
+    if (log.teamMember.toString() !== req.user.userId && !(await hasPermission(req.user, 'call-logs:delete'))) {
       return res.status(403).json({ message: 'Forbidden' });
     }
     await CallLog.findByIdAndDelete(req.params.id);

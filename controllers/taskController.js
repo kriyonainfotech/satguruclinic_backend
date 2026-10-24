@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const User = require('../models/User');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 // Helper to construct date range for filtering
 const getDateFilter = (dateString) => {
@@ -29,7 +32,7 @@ const canTeamManageTask = async (task, currentUserId) => {
 // 1. Create a new Task (supports single assignedTo ID, array of IDs, ALL_TEAM, or ALL_ADMIN)
 exports.createTask = async (req, res) => {
     try {
-        const { title, description, category, assignedTo, dueDate, dueDates, priority, checklistTemplate, checklistItems } = req.body;
+        const { title, description, remark, category, assignedTo, dueDate, dueDates, priority, checklistTemplate, checklistItems } = req.body;
         const currentUserId = req.user.userId;
         const currentUserRole = req.user.role;
         
@@ -45,6 +48,10 @@ exports.createTask = async (req, res) => {
         }
 
         const datesToProcess = dueDates && dueDates.length > 0 ? dueDates : [dueDate];
+
+        // Ek se zyada dates = Bulk Add, warna normal Add Task
+        const createAction = datesToProcess.length > 1 ? 'tasks:bulk-add' : 'tasks:create';
+        if (!(await hasPermission(req.user, createAction))) return denied(res);
 
         // Support ALL_TEAM, ALL_ADMIN, array of user IDs or single ID
         let targetIds = [];
@@ -97,6 +104,7 @@ exports.createTask = async (req, res) => {
                 const task = new Task({
                     title,
                     description: description || '',
+                    remark: remark || '',
                     category: category || 'General',
                     assignedTo: targetId,
                     assignedBy: currentUserId,
@@ -329,9 +337,13 @@ exports.getAssignableUsers = async (req, res) => {
 exports.updateTask = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, category, assignedTo, dueDate, status, priority, checklistTemplate, checklistItems } = req.body;
+        const { title, description, remark, category, assignedTo, dueDate, status, priority, checklistTemplate, checklistItems } = req.body;
         const currentUserId = req.user.userId;
         const currentUserRole = req.user.role;
+
+        // View popup se sirf checklist tick/untick ya remark save karne pe edit permission nahi maangta
+        const isViewUpdate = Object.keys(req.body).every(k => ['checklistItems', 'remark'].includes(k));
+        if (!isViewUpdate && !(await hasPermission(req.user, 'tasks:edit'))) return denied(res);
 
         const task = await Task.findById(id);
         if (!task) {
@@ -364,6 +376,7 @@ exports.updateTask = async (req, res) => {
             const commonFields = {
                 title: title !== undefined ? title : task.title,
                 description: description !== undefined ? description : task.description,
+                remark: remark !== undefined ? remark : task.remark,
                 category: category !== undefined ? category : task.category,
                 assignedTo: assignedTo !== undefined ? assignedTo : task.assignedTo,
                 priority: priority !== undefined ? priority : task.priority,
@@ -405,6 +418,7 @@ exports.updateTask = async (req, res) => {
 
         if (title !== undefined) task.title = title;
         if (description !== undefined) task.description = description;
+        if (remark !== undefined) task.remark = remark;
         if (category !== undefined) task.category = category;
         if (assignedTo !== undefined) task.assignedTo = assignedTo;
         if (dueDate !== undefined) task.dueDate = new Date(dueDate);
@@ -472,6 +486,7 @@ exports.deleteTask = async (req, res) => {
         if (!['superadmin', 'admin', 'team'].includes(currentUserRole)) {
             return res.status(403).json({ message: 'Not authorized to delete tasks' });
         }
+        if (!(await hasPermission(req.user, 'tasks:delete'))) return denied(res);
 
         const task = await Task.findById(id);
         if (!task) {

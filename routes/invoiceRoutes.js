@@ -3,6 +3,9 @@ const router = express.Router();
 const Invoice = require('../models/Invoice');
 const Collection = require('../models/Collection');
 const auth = require('../middleware/authMiddleware');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 router.get('/', auth, async (req, res) => {
     try {
@@ -42,6 +45,7 @@ router.put('/:id', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'payments:invoice-delete'))) return denied(res);
         await Invoice.findByIdAndDelete(req.params.id);
         await Collection.deleteMany({ invoiceId: req.params.id });
         res.json({ message: 'Invoice and associated collections deleted' });

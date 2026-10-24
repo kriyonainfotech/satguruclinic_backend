@@ -1,9 +1,22 @@
 const Lead = require('../models/Lead');
 const User = require('../models/User');
+const { hasPermission, getUserPermissions, checkPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
+
+// Reminders page bhi lead ka status aur follow-up use karta hai, isliye leads ya reminders me se koi ek action on ho to chalega
+const canLeadOrReminder = async (user, action) => {
+    if (user.role === 'superadmin') return true;
+    const permissions = await getUserPermissions(user);
+    return checkPermission(permissions, `leads:${action}`) || checkPermission(permissions, `reminders:${action}`);
+};
 
 const createLead = async (req, res) => {
     try {
-        const { fullName, email, mobile, status, source, assignedTo, date, nextFollowUp, birthdate } = req.body;
+        if (!(await hasPermission(req.user, 'leads:create'))) return denied(res);
+        const { fullName, email, mobile, status, source, date, nextFollowUp, birthdate } = req.body;
+        // Assign ki permission nahi hai to assignedTo ignore (team ka lead khud usi ko assign hota hai)
+        const assignedTo = (await hasPermission(req.user, 'leads:assign')) ? req.body.assignedTo : null;
         const createdBy = req.user.userId;
         
         const creator = await User.findById(createdBy);
@@ -85,8 +98,22 @@ const getLeads = async (req, res) => {
 const updateLead = async (req, res) => {
     try {
         if (req.body.assignedTo === '') { req.body.assignedTo = null; }
-        
+
+        // Inline status change (Leads table / Reminders) -> 'status', inline assign -> 'assign', baaki poora edit -> 'edit'
+        const keys = Object.keys(req.body);
+        if (keys.length === 1 && keys[0] === 'status') {
+            if (!(await canLeadOrReminder(req.user, 'status'))) return denied(res);
+        } else if (keys.length === 1 && keys[0] === 'assignedTo') {
+            if (!(await hasPermission(req.user, 'leads:assign'))) return denied(res);
+        } else if (!(await hasPermission(req.user, 'leads:edit'))) {
+            return denied(res);
+        }
+
         let updateData = { ...req.body };
+        // Assign ki permission nahi hai to edit form se assignment change nahi hoga
+        if ('assignedTo' in updateData && !(await hasPermission(req.user, 'leads:assign'))) {
+            delete updateData.assignedTo;
+        }
         if (updateData.assignedTo) {
             const assignee = await User.findById(updateData.assignedTo);
             if (assignee) {
@@ -131,6 +158,7 @@ const updateLead = async (req, res) => {
 
 const deleteLead = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'leads:delete'))) return denied(res);
         const deletedLead = await Lead.findByIdAndDelete(req.params.id);
         if (!deletedLead) return res.status(404).json({ message: 'Lead not found' });
         res.status(200).json({ message: 'Lead deleted successfully' });
@@ -150,6 +178,7 @@ const LeadReminder = require('../models/LeadReminder');
 
 module.exports.addReminder = async (req, res) => {
     try {
+        if (!(await canLeadOrReminder(req.user, 'followup'))) return denied(res);
         const leadId = req.params.id;
         const { type, date, time, nextFollowUpDate, remarks } = req.body;
         const createdBy = req.user.userId;
@@ -256,6 +285,7 @@ module.exports.getLeadById = async (req, res) => {
 
 module.exports.updateReminder = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'leads:history-edit'))) return denied(res);
         const { type, date, time, nextFollowUpDate, remarks } = req.body;
         const reminder = await LeadReminder.findByIdAndUpdate(req.params.reminderId, { type, date, time, nextFollowUpDate, remarks }, { new: true });
         if (!reminder) return res.status(404).json({ message: 'Reminder not found' });
@@ -271,6 +301,7 @@ module.exports.updateReminder = async (req, res) => {
 
 module.exports.deleteReminder = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'leads:history-edit'))) return denied(res);
         const deleted = await LeadReminder.findByIdAndDelete(req.params.reminderId);
         if (!deleted) return res.status(404).json({ message: 'Reminder not found' });
         res.status(200).json({ message: 'Reminder deleted' });

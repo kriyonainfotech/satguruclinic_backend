@@ -1,5 +1,8 @@
 const DailyReport = require('../models/DailyReport');
 const User = require('../models/User');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 // Create or Update daily report for a user on a specific date
 exports.saveReport = async (req, res) => {
@@ -32,6 +35,9 @@ exports.saveReport = async (req, res) => {
                 return res.status(403).json({ message: 'Not authorized to edit report for this user' });
             }
         }
+
+        const isOwnReport = userId.toString() === req.user.userId.toString();
+        if (!(await hasPermission(req.user, isOwnReport ? 'daily-reports:submit' : 'daily-reports:edit'))) return denied(res);
 
         const employee = await User.findById(userId);
         if (!employee) {
@@ -84,6 +90,10 @@ exports.getUserReport = async (req, res) => {
             }
         }
 
+        if (userId.toString() !== req.user.userId.toString()
+            && !(await hasPermission(req.user, 'daily-reports:view-team'))
+            && !(await hasPermission(req.user, 'daily-reports:edit'))) return denied(res);
+
         const report = await DailyReport.findOne({ userId, date });
         res.status(200).json(report || null);
     } catch (error) {
@@ -97,8 +107,8 @@ exports.getAllReports = async (req, res) => {
         const { date, month, startDate, endDate, userId } = req.query;
         let query = {};
 
-        // Role-based scoping
-        if (req.user.role === 'team') {
+        // Role-based scoping (view-team off ho to sirf apni reports)
+        if (req.user.role === 'team' || !(await hasPermission(req.user, 'daily-reports:view-team'))) {
             query.userId = req.user.userId;
         } else if (req.user.role === 'admin') {
             // Find team members assigned to this admin + self
@@ -137,6 +147,8 @@ exports.getAllReports = async (req, res) => {
 // Delete a report
 exports.deleteReport = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'daily-reports:delete'))) return denied(res);
+
         const { id } = req.params;
         const report = await DailyReport.findById(id);
         if (!report) {

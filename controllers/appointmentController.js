@@ -1,6 +1,18 @@
 const Appointment = require('../models/Appointment');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
+
+// PUT /:id teen jagah se aata hai, body dekh ke batata hai kaunsi permission chahiye:
+// Sale Entry ke baad { hasSaleEntry, status } -> sale-entry, Reschedule { appointmentDate, timeSlot, status: 'Rescheduled' } -> status, baaki -> edit
+const updateActionFor = (body) => {
+    const keys = Object.keys(body || {});
+    if ('hasSaleEntry' in body && keys.every(k => ['hasSaleEntry', 'status'].includes(k))) return 'sale-entry';
+    if (body.status === 'Rescheduled' && keys.every(k => ['appointmentDate', 'timeSlot', 'status'].includes(k))) return 'status';
+    return 'edit';
+};
 
 exports.getAppointments = async (req, res) => {
     try {
@@ -35,6 +47,7 @@ exports.getAppointments = async (req, res) => {
 
 exports.createAppointment = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'appointments:create'))) return denied(res);
         let adminId = req.user.userId;
         if (req.user.role === 'team') {
             const user = await User.findById(req.user.userId);
@@ -55,6 +68,7 @@ exports.createAppointment = async (req, res) => {
 
 exports.updateAppointmentStatus = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'appointments:status'))) return denied(res);
         const { id } = req.params;
         const { status } = req.body;
         const appointment = await Appointment.findByIdAndUpdate(id, { status }, { new: true });
@@ -66,6 +80,7 @@ exports.updateAppointmentStatus = async (req, res) => {
 
 exports.deleteAppointment = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'appointments:delete'))) return denied(res);
         const { id } = req.params;
         await Appointment.findByIdAndDelete(id);
         res.status(200).json({ message: 'Appointment deleted successfully' });
@@ -76,6 +91,7 @@ exports.deleteAppointment = async (req, res) => {
 
 exports.updateAppointment = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'appointments:' + updateActionFor(req.body)))) return denied(res);
         const { id } = req.params;
         const updated = await Appointment.findByIdAndUpdate(id, req.body, { new: true });
         res.status(200).json(updated);

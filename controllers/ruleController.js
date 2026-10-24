@@ -1,10 +1,11 @@
 const Rule = require('../models/Rule');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 exports.createRule = async (req, res) => {
     try {
-        if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
-            return res.status(403).json({ message: 'Not authorized' });
-        }
+        if (!(await hasPermission(req.user, 'rule-management:create'))) return denied(res);
         const { title, assignedRoles, assignedUsers } = req.body;
         
         const lowercasedRoles = (assignedRoles || []).map(r => r.toLowerCase());
@@ -33,6 +34,7 @@ exports.getRules = async (req, res) => {
         let query = {};
         
         if (req.query.assignedOnly === 'true' || fullUser.role === 'team') {
+            // My SOP/Rules (assignedOnly) me sirf assigned; Management page pe team ko apne banaye hue bhi dikhte hain
             // Filter Rules to only those assigned to this specific user (by role, category, or user ID)
             const rolesToCheck = [fullUser.role.toLowerCase()];
             if (fullUser.category) {
@@ -45,6 +47,9 @@ exports.getRules = async (req, res) => {
                     { assignedUsers: fullUser._id }
                 ]
             };
+            if (req.query.assignedOnly !== 'true') {
+                query.$or.push({ createdBy: fullUser._id });
+            }
         } else if (fullUser.role === 'admin') {
             query.createdBy = fullUser._id;
         }
@@ -58,6 +63,7 @@ exports.getRules = async (req, res) => {
 
 exports.updateRule = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'rule-management:edit'))) return denied(res);
         const { id } = req.params;
         const { title, assignedRoles, assignedUsers } = req.body;
         
@@ -78,6 +84,7 @@ exports.updateRule = async (req, res) => {
 
 exports.deleteRule = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'rule-management:delete'))) return denied(res);
         const { id } = req.params;
         const deletedRule = await Rule.findByIdAndDelete(id);
         if (!deletedRule) return res.status(404).json({ message: 'Rule not found' });
@@ -90,6 +97,7 @@ exports.deleteRule = async (req, res) => {
 // Points Management
 exports.addPoint = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'rule-management:points-add'))) return denied(res);
         const { id } = req.params;
         const { heading, description } = req.body;
         
@@ -107,6 +115,7 @@ exports.addPoint = async (req, res) => {
 
 exports.updatePoint = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'rule-management:points-edit'))) return denied(res);
         const { id, pointId } = req.params;
         const { heading, description } = req.body;
         
@@ -125,6 +134,7 @@ exports.updatePoint = async (req, res) => {
 
 exports.deletePoint = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'rule-management:points-delete'))) return denied(res);
         const { id, pointId } = req.params;
         
         const rule = await Rule.findByIdAndUpdate(

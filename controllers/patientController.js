@@ -1,6 +1,9 @@
 const Patient = require('../models/Patient');
 const User = require('../models/User');
 const Appointment = require('../models/Appointment');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 // Get all patients
 exports.getPatients = async (req, res) => {
@@ -61,6 +64,10 @@ exports.addPatient = async (req, res) => {
         if (!['superadmin', 'admin', 'team'].includes(req.user.role)) {
             return res.status(403).json({ message: 'Not authorized to add patients' });
         }
+        // Appointments page se naya patient bhi yahin banta hai, isliye dono me se ek permission kaafi hai
+        if (!(await hasPermission(req.user, 'patients:create')) && !(await hasPermission(req.user, 'appointments:create'))) {
+            return denied(res);
+        }
 
         let adminId;
         if (req.user.role === 'admin') {
@@ -92,6 +99,11 @@ exports.addPatient = async (req, res) => {
 exports.updatePatient = async (req, res) => {
     try {
         const { id } = req.params;
+        // Sirf status bheja ho to status toggle hai, warna poora edit
+        const keys = Object.keys(req.body || {});
+        const action = keys.length === 1 && keys[0] === 'status' ? 'status' : 'edit';
+        if (!(await hasPermission(req.user, 'patients:' + action))) return denied(res);
+
         const patient = await Patient.findById(id);
         
         if (!patient) {
@@ -146,7 +158,14 @@ exports.deletePatient = async (req, res) => {
         if (req.user.role === 'admin' && patient.adminId.toString() !== req.user.userId) {
             return res.status(403).json({ message: 'Not authorized to delete this patient' });
         } else if (req.user.role === 'team') {
-            return res.status(403).json({ message: 'Team members cannot delete patients' });
+            const user = await User.findById(req.user.userId);
+            if (patient.adminId?.toString() !== user?.adminId?.toString()) {
+                return res.status(403).json({ message: 'Not authorized to delete this patient' });
+            }
+        }
+        // Team ke liye pehle hamesha band tha, ab Superadmin 'patients:delete' se on kar sakta hai
+        if (!(await hasPermission(req.user, 'patients:delete'))) {
+            return res.status(403).json({ message: 'Aapko patient delete karne ki permission nahi hai' });
         }
 
         await Patient.findByIdAndDelete(id);

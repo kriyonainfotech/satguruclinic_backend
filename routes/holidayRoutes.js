@@ -4,6 +4,9 @@ const ical = require('node-ical');
 const CompanyHoliday = require('../models/CompanyHoliday');
 const auth = require('../middleware/authMiddleware');
 const moment = require('moment');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 // 1. Get all holidays (Merged Google iCal + DB Status)
 router.get('/', async (req, res) => {
@@ -85,12 +88,10 @@ router.get('/', async (req, res) => {
     }
 });
 
-// 2. Save or Update a Holiday Setting (SuperAdmin/Admin only)
+// 2. Save or Update a Holiday Setting (permission: holidays:declare)
 router.post('/toggle', auth, async (req, res) => {
     try {
-        if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
+        if (!(await hasPermission(req.user, 'holidays:declare'))) return denied(res);
 
         const { dateStr, title, isOfficial, isPaid } = req.body;
 
@@ -119,9 +120,7 @@ router.post('/toggle', auth, async (req, res) => {
 // 3. Save Custom Holiday Range
 router.post('/custom', auth, async (req, res) => {
     try {
-        if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
+        if (!(await hasPermission(req.user, 'holidays:add'))) return denied(res);
 
         const { title, startDate, endDate, isPaid, isHalfDay } = req.body;
         
@@ -187,9 +186,7 @@ router.get('/upcoming', auth, async (req, res) => {
 // 5. Delete Custom Holiday
 router.delete('/:id', auth, async (req, res) => {
     try {
-        if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
-            return res.status(403).json({ message: 'Access denied' });
-        }
+        if (!(await hasPermission(req.user, 'holidays:delete'))) return denied(res);
         await CompanyHoliday.findByIdAndDelete(req.params.id);
         res.json({ message: 'Holiday deleted successfully' });
     } catch (error) {

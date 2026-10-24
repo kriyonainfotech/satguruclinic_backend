@@ -3,6 +3,16 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { calculatePerformance } = require('../utils/performanceHelper');
+const { hasPermission } = require('../utils/permissions');
+
+// Admin user pe action -> 'admin-management:<action>', team user pe -> 'team-management:<action>'.
+// Superadmin ko sab allowed, superadmin user pe koi aur action nahi le sakta.
+const canManageUser = async (reqUser, targetRole, action) => {
+    if (reqUser.role === 'superadmin') return true;
+    if (targetRole === 'admin') return hasPermission(reqUser, `admin-management:${action}`);
+    if (targetRole === 'team') return hasPermission(reqUser, `team-management:${action}`);
+    return false;
+};
 
 // Ye login function hai. Email aur password check karke token deta hai.
 exports.login = async (req, res) => {
@@ -73,6 +83,9 @@ const validateSenior = async (seniorId, reqUser, selfId) => {
     if (reqUser.role === 'admin' && senior.adminId?.toString() !== reqUser.userId.toString()) {
         return { error: 'You can only select a senior from your own team', status: 403 };
     }
+    if (reqUser.role === 'team' && senior.adminId?.toString() !== reqUser.adminId?.toString()) {
+        return { error: 'You can only select a senior from your own team', status: 403 };
+    }
     return { senior };
 };
 
@@ -86,11 +99,8 @@ exports.registerUser = async (req, res) => {
             return res.status(400).json({ message: 'Invalid role' });
         }
 
-        if (role === 'admin' && req.user.role !== 'superadmin') {
-            return res.status(403).json({ message: 'Only superadmin can create admins' });
-        }
-        if (role === 'team' && !['superadmin', 'admin'].includes(req.user.role)) {
-            return res.status(403).json({ message: 'Not authorized to create team members' });
+        if (!(await canManageUser(req.user, role, 'create'))) {
+            return res.status(403).json({ message: role === 'admin' ? 'Not authorized to create admins' : 'Not authorized to create team members' });
         }
 
         let sanitizedMobile = '';
@@ -112,6 +122,10 @@ exports.registerUser = async (req, res) => {
         let adminId = reqAdminId;
         if (role === 'team' && req.user.role === 'admin') {
             adminId = req.user.userId;
+        }
+        // Team member (permission se) kisi ko banaye to wo usi ke admin ke under jayega
+        if (role === 'team' && req.user.role === 'team') {
+            adminId = req.user.adminId;
         }
 
         // Senior / Junior setup
@@ -154,7 +168,7 @@ exports.getUsersByRole = async (req, res) => {
         const { role } = req.params;
         
         // Authorization check
-        if (role === 'admin' && !['superadmin', 'admin'].includes(req.user.role)) {
+        if (role === 'admin' && !['superadmin', 'admin'].includes(req.user.role) && !(await hasPermission(req.user, 'admin-management'))) {
             return res.status(403).json({ message: 'Not authorized to view admins' });
         }
         if (role === 'team' && !['superadmin', 'admin', 'team'].includes(req.user.role)) {
@@ -199,11 +213,8 @@ exports.updateUser = async (req, res) => {
         const userToUpdate = await User.findById(id);
         if (!userToUpdate) return res.status(404).json({ message: 'User not found' });
 
-        if (userToUpdate.role === 'admin' && req.user.role !== 'superadmin') {
-            return res.status(403).json({ message: 'Not authorized to edit admins' });
-        }
-        if (userToUpdate.role === 'team' && !['superadmin', 'admin'].includes(req.user.role)) {
-            return res.status(403).json({ message: 'Not authorized to edit team' });
+        if (!(await canManageUser(req.user, userToUpdate.role, 'edit'))) {
+            return res.status(403).json({ message: userToUpdate.role === 'admin' ? 'Not authorized to edit admins' : 'Not authorized to edit this user' });
         }
 
         if (mobile !== undefined) {
@@ -275,11 +286,8 @@ exports.deleteUser = async (req, res) => {
         const userToDelete = await User.findById(id);
         if (!userToDelete) return res.status(404).json({ message: 'User not found' });
 
-        if (userToDelete.role === 'admin' && req.user.role !== 'superadmin') {
-            return res.status(403).json({ message: 'Not authorized to delete admins' });
-        }
-        if (userToDelete.role === 'team' && !['superadmin', 'admin'].includes(req.user.role)) {
-            return res.status(403).json({ message: 'Not authorized to delete team' });
+        if (!(await canManageUser(req.user, userToDelete.role, 'delete'))) {
+            return res.status(403).json({ message: userToDelete.role === 'admin' ? 'Not authorized to delete admins' : 'Not authorized to delete this user' });
         }
 
         await User.findByIdAndDelete(id);
@@ -304,14 +312,10 @@ exports.changeUserPassword = async (req, res) => {
         const userToUpdate = await User.findById(id);
         if (!userToUpdate) return res.status(404).json({ message: 'User not found' });
 
-        // Permissions:
-        // Superadmin can change password for any admin or team member
-        // Admin can change password for team members (or self)
-        if (userToUpdate.role === 'admin' && req.user.role !== 'superadmin' && req.user.userId !== id) {
-            return res.status(403).json({ message: 'Not authorized to change admin password' });
-        }
-        if (userToUpdate.role === 'team' && !['superadmin', 'admin'].includes(req.user.role) && req.user.userId !== id) {
-            return res.status(403).json({ message: 'Not authorized to change team password' });
+        // Permissions: apna password koi bhi badal sakta hai,
+        // dusre ka password 'admin-management:password' / 'team-management:password' se (Superadmin ko sab allowed)
+        if (req.user.userId !== id && !(await canManageUser(req.user, userToUpdate.role, 'password'))) {
+            return res.status(403).json({ message: userToUpdate.role === 'admin' ? 'Not authorized to change admin password' : 'Not authorized to change this password' });
         }
 
         const salt = await bcrypt.genSalt(10);

@@ -93,11 +93,16 @@ app.use('/api/calls', require('./routes/callLogs'));
 app.use('/api/holidays', require('./routes/holidayRoutes'));
 app.use('/api/invoices', require('./routes/invoiceRoutes'));
 app.use('/api/collections', require('./routes/collectionRoutes'));
+app.use('/api/expense-categories', require('./routes/expenseCategoryRoutes'));
 app.use('/api/expenses', require('./routes/expenseRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/leads', require('./routes/leadRoutes'));
 app.use('/api/calendar', require('./routes/calendarRoutes'));
 app.use('/api/daily-reports', require('./routes/dailyReportRoutes'));
+app.use('/api/permissions', require('./routes/permissionRoutes'));
+app.use('/api/complaints', require('./routes/complaintRoutes'));
+app.use('/api/pharmacy-bills', require('./routes/pharmacyBillRoutes'));
+app.use('/api/opening-balance', require('./routes/openingBalanceRoutes'));
 
 app.get('/', (req, res) => {
     res.send('Satguru Clinic Backend is running!');

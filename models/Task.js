@@ -11,6 +11,12 @@ const taskSchema = new mongoose.Schema({
         default: '',
         trim: true
     },
+    // Task pe note / update (View popup se bhi add-edit hota hai)
+    remark: {
+        type: String,
+        default: '',
+        trim: true
+    },
     category: {
         type: String,
         default: 'General',

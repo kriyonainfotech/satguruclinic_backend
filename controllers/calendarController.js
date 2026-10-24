@@ -3,6 +3,9 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Task = require('../models/Task');
 const CalendarEvent = require('../models/CalendarEvent');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai', error: 'Aapko ye karne ki permission nahi hai' });
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -12,14 +15,19 @@ const oauth2Client = new google.auth.OAuth2(
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.events'];
 
-exports.getAuthUrl = (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: SCOPES,
-    prompt: 'consent', // Force consent screen to always get a refresh token
-    state: req.user.userId // Pass user ID to callback
-  });
-  res.json({ url });
+exports.getAuthUrl = async (req, res) => {
+  try {
+    if (!(await hasPermission(req.user, 'schedule-management:google-sync'))) return denied(res);
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: SCOPES,
+      prompt: 'consent', // Force consent screen to always get a refresh token
+      state: req.user.userId // Pass user ID to callback
+    });
+    res.json({ url });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 };
 
 exports.oauthCallback = async (req, res) => {
@@ -105,6 +113,7 @@ exports.getEvents = async (req, res) => {
 
 exports.createEvent = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'schedule-management:create'))) return denied(res);
         const { summary, description, startDateTime, endDateTime, type } = req.body;
         const user = await User.findById(req.user.userId);
         
@@ -174,6 +183,7 @@ exports.createEvent = async (req, res) => {
 
 exports.disconnect = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'schedule-management:google-sync'))) return denied(res);
         await User.findByIdAndUpdate(req.user.userId, { googleCalendarTokens: null });
         res.json({ message: 'Disconnected successfully' });
     } catch (error) {
@@ -183,6 +193,7 @@ exports.disconnect = async (req, res) => {
 
 exports.updateEvent = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'schedule-management:edit'))) return denied(res);
         const { summary, description, startDateTime, endDateTime } = req.body;
         const user = await User.findById(req.user.userId);
         
@@ -230,6 +241,7 @@ exports.updateEvent = async (req, res) => {
 
 exports.deleteEvent = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'schedule-management:delete'))) return denied(res);
         const user = await User.findById(req.user.userId);
         let calEvent = null;
         if (mongoose.Types.ObjectId.isValid(req.params.eventId)) {

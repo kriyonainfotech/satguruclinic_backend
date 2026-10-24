@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const ChecklistTemplate = require('../models/ChecklistTemplate');
 const authMiddleware = require('../middleware/authMiddleware');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 // Get all templates for the logged in user's organization
 router.get('/', authMiddleware, async (req, res) => {
@@ -16,6 +19,7 @@ router.get('/', authMiddleware, async (req, res) => {
 // Create new template
 router.post('/', authMiddleware, async (req, res) => {
   try {
+    if (!(await hasPermission(req.user, 'checklist-templates:create'))) return denied(res);
     const adminId = req.user.role === 'team' || req.user.role === 'admin' ? req.user.adminId || req.user.userId : req.user.userId;
     const newTemplate = new ChecklistTemplate({
       title: req.body.title,
@@ -33,6 +37,7 @@ router.post('/', authMiddleware, async (req, res) => {
 // Update template
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
+    if (!(await hasPermission(req.user, 'checklist-templates:edit'))) return denied(res);
     const updatedTemplate = await ChecklistTemplate.findByIdAndUpdate(
       req.params.id,
       {
@@ -50,6 +55,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
 // Delete template
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
+    if (!(await hasPermission(req.user, 'checklist-templates:delete'))) return denied(res);
     await ChecklistTemplate.findByIdAndDelete(req.params.id);
     res.json({ message: 'Template deleted successfully' });
   } catch (error) {

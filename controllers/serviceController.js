@@ -1,7 +1,11 @@
 const Service = require('../models/Service');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 exports.createService = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'services:service-add'))) return denied(res);
         const { name, price, description } = req.body;
         const newService = new Service({ name, price, description });
         await newService.save();
@@ -22,6 +26,7 @@ exports.getServices = async (req, res) => {
 
 exports.updateService = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'services:service-edit'))) return denied(res);
         const { id } = req.params;
         const updatedService = await Service.findByIdAndUpdate(
             id,
@@ -39,6 +44,7 @@ exports.updateService = async (req, res) => {
 
 exports.deleteService = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'services:service-delete'))) return denied(res);
         const { id } = req.params;
         const deletedService = await Service.findByIdAndDelete(id);
         if (!deletedService) {

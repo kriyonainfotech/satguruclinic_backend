@@ -1,9 +1,13 @@
 const Package = require('../models/Package');
 const Service = require('../models/Service');
 const Medicine = require('../models/Medicine');
+const { hasPermission } = require('../utils/permissions');
+
+const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
 exports.createPackage = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'services:package-add'))) return denied(res);
         const { name, services, medicines, extraServices = [], description } = req.body;
         
         let totalPrice = 0;
@@ -52,6 +56,7 @@ exports.getPackages = async (req, res) => {
 
 exports.updatePackage = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'services:package-edit'))) return denied(res);
         const { id } = req.params;
         const { name, services, medicines, extraServices, description } = req.body;
         
@@ -100,6 +105,7 @@ exports.updatePackage = async (req, res) => {
 
 exports.deletePackage = async (req, res) => {
     try {
+        if (!(await hasPermission(req.user, 'services:package-delete'))) return denied(res);
         const { id } = req.params;
         const deletedPackage = await Package.findByIdAndDelete(id);
         if (!deletedPackage) {
