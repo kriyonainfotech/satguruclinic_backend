@@ -8,6 +8,7 @@ const Lead = require('../models/Lead');
 const moment = require('moment');
 const { calculatePerformance } = require('../utils/performanceHelper');
 const { hasPermission } = require('../utils/permissions');
+const { autoCloseForgottenShifts } = require('../utils/attendanceShifts');
 
 const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
@@ -148,6 +149,13 @@ exports.getPayroll = async (req, res) => {
                 $lte: endDate.format('YYYY-MM-DD')
             }
         });
+
+        // Multi-shift me jinka clock out reh gaya, unki shift end time par band karo (salary sahi bane)
+        const timingsByUser = {};
+        users.forEach(u => { timingsByUser[u._id.toString()] = u.timings; });
+        await Promise.all(attendanceRecords.map(a =>
+            autoCloseForgottenShifts(a, timingsByUser[a.userId.toString()]) ? a.save() : null
+        ));
 
         // Sales (invoices with services/packages) made by team members this month
         const monthInvoices = await Invoice.find({
@@ -412,6 +420,11 @@ exports.getMyWallet = async (req, res) => {
                 $lte: endDate.format('YYYY-MM-DD')
             }
         });
+
+        // Multi-shift me jinka clock out reh gaya, unki shift end time par band karo
+        await Promise.all(attendanceRecords.map(a =>
+            autoCloseForgottenShifts(a, user.timings) ? a.save() : null
+        ));
 
         let present = 0;
         let halfDay = 0;

@@ -4,6 +4,7 @@ const CompanyHoliday = require('../models/CompanyHoliday');
 const moment = require('moment');
 const { getUserPermissions, checkPermission } = require('../utils/permissions');
 const { runPhotoCleanup } = require('../utils/photoCleanup');
+const { calculateScheduledMinutes, autoCloseForgottenShifts } = require('../utils/attendanceShifts');
 
 // Selfie photo hata do (jinko 'attendance:photos' permission nahi hai)
 const stripPhotos = (records) => records.map(r => {
@@ -27,25 +28,6 @@ const getTeamScopeQuery = (reqUser, permissions) => {
     return { _id: reqUser.userId };
 };
 
-// Helper to calculate minutes between "HH:mm" strings
-const calculateScheduledMinutes = (timings) => {
-    let totalMinutes = 0;
-    if (!timings || timings.length === 0) return 480; // default 8 hours
-
-    timings.forEach(t => {
-        if (t.startTime && t.endTime) {
-            const timeFormats = ['HH:mm', 'hh:mm A', 'h:mm A', 'hh:mm a', 'h:mm a'];
-            const start = moment(t.startTime, timeFormats);
-            let end = moment(t.endTime, timeFormats);
-            if (end.isBefore(start)) {
-                end.add(1, 'days'); // shift crosses midnight
-            }
-            totalMinutes += end.diff(start, 'minutes');
-        }
-    });
-    return totalMinutes > 0 ? totalMinutes : 480;
-};
-
 exports.getTodayStatus = async (req, res) => {
     try {
         const today = moment().format('YYYY-MM-DD');
@@ -53,6 +35,7 @@ exports.getTodayStatus = async (req, res) => {
             Attendance.findOne({ userId: req.user.userId, date: today }),
             User.findById(req.user.userId).select('timingType timings')
         ]);
+        if (attendance && autoCloseForgottenShifts(attendance, user?.timings)) await attendance.save();
         res.json({
             ...(attendance ? (attendance._doc || attendance) : { status: 'none' }),
             timingType: user?.timingType || 'normal',
@@ -114,6 +97,10 @@ exports.clockIn = async (req, res) => {
         if (photo && !attendance.photo) {
             attendance.photo = photo;
         }
+
+        // Pichhli shift ka clock out bhool gaye ho to wo shift apne end time par band ho jaye
+        const clockInUser = await User.findById(req.user.userId).select('timings');
+        autoCloseForgottenShifts(attendance, clockInUser?.timings);
 
         await attendance.save();
         res.json({ message: 'Clocked in successfully', attendance });
@@ -223,6 +210,13 @@ exports.getAttendanceList = async (req, res) => {
             const holidays = await CompanyHoliday.find({ date: { $gte: startDate, $lte: endDate } });
             holidays.forEach(h => holidaysMap[h.date] = h.isPaid ? 'holiday' : 'unpaid-holiday');
         }
+
+        // Multi-shift me jinka clock out reh gaya, unki shift end time par band karo
+        const timingsByUser = {};
+        users.forEach(u => { timingsByUser[u._id.toString()] = u.timings; });
+        await Promise.all(attendanceRecords.map(a =>
+            autoCloseForgottenShifts(a, timingsByUser[a.userId.toString()]) ? a.save() : null
+        ));
 
         // If date range is specified (startDate && endDate)
         if (startDate && endDate) {
