@@ -8,6 +8,14 @@ const paymentSchema = new mongoose.Schema({
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
+// Bill me aayi medicine aur kitni quantity (stock tracking isi se hoti hai)
+const stockItemSchema = new mongoose.Schema({
+    medicine: { type: mongoose.Schema.Types.ObjectId, ref: 'Medicine', default: null }, // master list se chuni ho to
+    name: { type: String, required: true, trim: true },
+    category: { type: String, default: '', trim: true },
+    qty: { type: Number, required: true, min: 1 }
+}, { _id: false });
+
 const pharmacyBillSchema = new mongoose.Schema({
     supplierName: {
         type: String,
@@ -17,7 +25,8 @@ const pharmacyBillSchema = new mongoose.Schema({
     billNumber: { type: String, default: '', trim: true },
     billDate: { type: String, required: [true, 'Bill date is required'] }, // YYYY-MM-DD
     dueDate: { type: String, default: '' }, // YYYY-MM-DD, optional
-    items: { type: String, default: '', trim: true }, // kya saman aaya
+    items: { type: String, default: '', trim: true }, // kya saman aaya (text; stockItems ho to unhi se banta hai)
+    stockItems: { type: [stockItemSchema], default: [] },
     totalAmount: {
         type: Number,
         required: [true, 'Bill amount is required'],

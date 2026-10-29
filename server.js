@@ -91,6 +91,7 @@ app.use('/api/attendance', require('./routes/attendanceRoutes'));
 app.use('/api/payroll', require('./routes/payrollRoutes'));
 app.use('/api/calls', require('./routes/callLogs'));
 app.use('/api/holidays', require('./routes/holidayRoutes'));
+app.use('/api/leaves', require('./routes/leaveRoutes'));
 app.use('/api/invoices', require('./routes/invoiceRoutes'));
 app.use('/api/collections', require('./routes/collectionRoutes'));
 app.use('/api/expense-categories', require('./routes/expenseCategoryRoutes'));

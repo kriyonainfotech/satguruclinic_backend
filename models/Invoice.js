@@ -10,6 +10,16 @@ const invoiceSchema = new mongoose.Schema({
     status: { type: String, default: 'Pending' },
     date: { type: String },
     notes: { type: String },
+    // Bechi gayi medicines (stock tracking). Purane invoices me nahi hai, wahan 'work' text se padhte hain.
+    medicineItems: {
+        type: [{
+            _id: false,
+            medicine: { type: mongoose.Schema.Types.ObjectId, ref: 'Medicine', default: null },
+            name: { type: String, required: true },
+            qty: { type: Number, required: true, min: 1 }
+        }],
+        default: undefined
+    },
     // Sales commission: the team member who made the sale gets a % of the sale total
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     createdByName: { type: String },

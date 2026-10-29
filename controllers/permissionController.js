@@ -3,6 +3,8 @@ const RolePermission = require('../models/RolePermission');
 const User = require('../models/User');
 const { PERMISSION_MODULES, PERMISSION_ROLES, PERMISSION_KEYS } = require('../config/permissionModules');
 const { isRoleDefault, getUserPermissions } = require('../utils/permissions');
+const TaskAssignRule = require('../models/TaskAssignRule');
+const { DEFAULT_ASSIGN_MATRIX, normalizeMatrix, getAssignMatrix } = require('../utils/taskAssign');
 
 // Logged-in user ko kaunse modules dikhne chahiye
 exports.getMyPermissions = async (req, res) => {
@@ -31,12 +33,12 @@ exports.getAllPermissions = async (req, res) => {
         }
         const [docs, users] = await Promise.all([
             RolePermission.find(),
-            User.find({ role: { $in: PERMISSION_ROLES } }).select('name role category').sort({ name: 1 })
+            User.find({ role: { $in: PERMISSION_ROLES } }).select('name role category teamLevel').sort({ name: 1 })
         ]);
         res.status(200).json({
             modules: PERMISSION_MODULES,
             roles: PERMISSION_ROLES,
-            users: users.map(u => ({ _id: u._id, name: u.name, role: u.role, category: u.category || '' })),
+            users: users.map(u => ({ _id: u._id, name: u.name, role: u.role, category: u.category || '', teamLevel: u.teamLevel || '' })),
             // Purane category-wise documents ab use nahi hote, isliye nahi bhejte
             overrides: docs
                 .filter(d => isRoleDefault(d) || d.userId)
@@ -101,6 +103,39 @@ exports.resetPermissions = async (req, res) => {
 
         await RolePermission.deleteOne({ role, category: '', userId });
         res.status(200).json({ message: 'Permissions reset to default' });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// Superadmin: Task Assign Permissions table (kaun kisko task de sakta hai)
+exports.getTaskAssignMatrix = async (req, res) => {
+    try {
+        if (req.user.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Only superadmin can view task assign permissions' });
+        }
+        res.status(200).json({ matrix: await getAssignMatrix(), defaults: DEFAULT_ASSIGN_MATRIX });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// body: { matrix: { admin: { admin, senior, junior }, senior: {...}, junior: {...} } }  (null = defaults pe wapas)
+exports.updateTaskAssignMatrix = async (req, res) => {
+    try {
+        if (req.user.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Only superadmin can update task assign permissions' });
+        }
+        if (req.body.matrix === null) {
+            await TaskAssignRule.deleteMany({});
+            return res.status(200).json({ matrix: normalizeMatrix({}), defaults: DEFAULT_ASSIGN_MATRIX });
+        }
+        if (!req.body.matrix || typeof req.body.matrix !== 'object') {
+            return res.status(400).json({ message: 'matrix object is required' });
+        }
+        const matrix = normalizeMatrix(req.body.matrix);
+        await TaskAssignRule.findOneAndUpdate({}, { $set: { matrix } }, { upsert: true });
+        res.status(200).json({ matrix, defaults: DEFAULT_ASSIGN_MATRIX });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }

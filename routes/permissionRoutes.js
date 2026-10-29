@@ -9,5 +9,7 @@ router.get('/me', permissionController.getMyPermissions);
 router.get('/', permissionController.getAllPermissions);
 router.put('/', permissionController.updatePermissions);
 router.post('/reset', permissionController.resetPermissions);
+router.get('/task-assign', permissionController.getTaskAssignMatrix);
+router.put('/task-assign', permissionController.updateTaskAssignMatrix);
 
 module.exports = router;

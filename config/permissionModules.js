@@ -127,6 +127,13 @@ const PERMISSION_MODULES = [
         ]
     },
     {
+        key: 'leaves', label: 'Leave Management', defaults: { admin: true, team: true },
+        actions: [
+            { key: 'apply', label: 'Apply Leave', defaults: { admin: true, team: true } },
+            { key: 'approve', label: 'Approve / Reject Leave', defaults: { admin: true, team: false } }
+        ]
+    },
+    {
         key: 'services', label: 'Services & Packages', defaults: { admin: true, team: true },
         actions: [
             { key: 'service-add', label: 'Add Service', defaults: { admin: true, team: true } },
@@ -210,7 +217,10 @@ const PERMISSION_MODULES = [
             { key: 'create', label: 'Add Bill', defaults: { admin: true, team: true } },
             { key: 'edit', label: 'Edit Bill', defaults: { admin: true, team: true } },
             { key: 'delete', label: 'Delete Bill', defaults: { admin: true, team: true } },
-            { key: 'payment', label: 'Add / Remove Payment', defaults: { admin: true, team: true } }
+            { key: 'payment', label: 'Add / Remove Payment', defaults: { admin: true, team: true } },
+            { key: 'stock-add', label: 'Add Medicine Qty (in Bill)', defaults: { admin: true, team: true } },
+            { key: 'stock-tracking', label: 'Medicine Stock Tracking', defaults: { admin: true, team: true } },
+            { key: 'stock-manual', label: 'Manual Stock Out (without Sale Entry)', defaults: { admin: true, team: false } }
         ]
     },
     {

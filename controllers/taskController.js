@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Task = require('../models/Task');
 const User = require('../models/User');
 const { hasPermission } = require('../utils/permissions');
+const { getAssignMatrix, canAssignByMatrix, isRowCustom } = require('../utils/taskAssign');
 
 const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
 
@@ -23,10 +24,11 @@ const getJuniorIds = async (userId) => {
     return juniors.map(u => u._id.toString());
 };
 
-// Team member ye task manage kar sakta hai? (khud ka task ya uske junior ka task)
+// Team member ye task manage kar sakta hai? (khud ka task, khud ka diya hua task, ya uske junior ka task)
 const canTeamManageTask = async (task, currentUserId) => {
     const assigneeId = task.assignedTo.toString();
     if (assigneeId === currentUserId.toString()) return true;
+    if (task.assignedBy && task.assignedBy.toString() === currentUserId.toString()) return true;
     const juniorIds = await getJuniorIds(currentUserId);
     return juniorIds.includes(assigneeId);
 };
@@ -85,24 +87,15 @@ exports.createTask = async (req, res) => {
 
         const createdTasks = [];
 
-        const myJuniorIds = currentUserRole === 'team' ? await getJuniorIds(currentUserId) : [];
+        // Website Settings -> Task Assign Permissions ki table
+        const assignMatrix = await getAssignMatrix();
 
         for (const targetId of targetIds) {
             const targetUser = await User.findById(targetId);
             if (!targetUser) continue;
 
-            // Permission check:
-            if (currentUserRole === 'team') {
-                // Team member khud ko, aur senior ho to kisi bhi junior ko task de sakta hai
-                if (targetUser.role === 'team'
-                    && targetUser._id.toString() !== currentUserId.toString()
-                    && !myJuniorIds.includes(targetUser._id.toString())) continue;
-                if (targetUser.role === 'superadmin') continue;
-            } else if (currentUserRole === 'admin') {
-                if (targetUser.role === 'superadmin') continue;
-                if (targetUser.role === 'admin' && targetUser._id.toString() !== currentUserId.toString()) continue;
-                // Admin kisi bhi team member ko task de sakta hai (chahe usne create kiya ho ya nahi)
-            }
+            // Permission check (Task Assign Permissions table)
+            if (!canAssignByMatrix(assignMatrix, req.user, targetUser)) continue;
 
             for (const d of datesToProcess) {
                 const task = new Task({
@@ -159,8 +152,14 @@ exports.getTasks = async (req, res) => {
 
         let query = {};
 
+        // "Assigned by Me": maine doosron ko jo tasks diye (sab roles ke liye), status track karne ke liye
+        const isAssignedByMe = tab === 'assigned-by-me';
+
         // Role-based visibility
-        if (currentUserRole === 'team') {
+        if (isAssignedByMe) {
+            query.assignedBy = currentUserId;
+            query.assignedTo = { $ne: currentUserId };
+        } else if (currentUserRole === 'team') {
             if (tab === 'admin') {
                 const adminUsers = await User.find({ role: 'admin' }).select('_id');
                 const adminIds = adminUsers.map(u => u._id);
@@ -195,7 +194,12 @@ exports.getTasks = async (req, res) => {
         }
 
         // Additional filter
-        if (assignedTo && currentUserRole === 'superadmin') {
+        if (isAssignedByMe) {
+            // assignedBy = main hi rahega, isliye kisi bhi assignee ka filter safe hai
+            if (assignedTo && mongoose.Types.ObjectId.isValid(assignedTo) && assignedTo.toString() !== currentUserId.toString()) {
+                query.assignedTo = assignedTo;
+            }
+        } else if (assignedTo && currentUserRole === 'superadmin') {
             query.assignedTo = assignedTo;
         } else if (assignedTo && currentUserRole === 'admin') {
             // Khud ka ya kisi bhi team member ka filter allowed
@@ -298,39 +302,23 @@ exports.getTasks = async (req, res) => {
 exports.getAssignableUsers = async (req, res) => {
     try {
         const currentUserRole = (req.user.role || '').toLowerCase();
-        const { role } = req.query;
+        const { role, withMeta } = req.query;
 
-        let query = {};
+        // Superadmin sabko de sakta hai (purana tarika)
         if (currentUserRole === 'superadmin') {
-            query = role ? { role: role.toLowerCase() } : {};
-        } else if (currentUserRole === 'admin') {
-            if (role === 'admin') {
-                query = { _id: req.user.userId };
-            } else if (role === 'team') {
-                query = { role: 'team' };
-            } else {
-                query = { $or: [{ _id: req.user.userId }, { role: 'team' }] };
-            }
-        } else if (currentUserRole === 'team') {
-            const currentUser = await User.findById(req.user.userId);
-            // Senior ho to apne juniors bhi assignable hain
-            const juniorIds = await getJuniorIds(req.user.userId);
-            const selfAndJuniors = [req.user.userId, ...juniorIds];
-            if (role === 'admin') {
-                query = currentUser.adminId ? { _id: currentUser.adminId } : { _id: null };
-            } else if (role === 'team') {
-                query = { _id: { $in: selfAndJuniors } };
-            } else {
-                query = currentUser.adminId 
-                  ? { _id: { $in: [currentUser.adminId, ...selfAndJuniors] } }
-                  : { _id: { $in: selfAndJuniors } };
-            }
-        } else {
-            query = { _id: req.user.userId };
+            const users = await User.find(role ? { role: role.toLowerCase() } : {}).select('name email role mobile teamLevel seniorId');
+            return res.json(withMeta ? { users, customRule: false } : users);
         }
 
-        const users = await User.find(query).select('name email role mobile teamLevel seniorId');
-        res.json(users);
+        // Baaki: Task Assign Permissions table ke hisaab se (+ khud)
+        const matrix = await getAssignMatrix();
+        const candidates = await User.find({
+            $or: [{ _id: req.user.userId }, { role: { $in: ['admin', 'team'] } }]
+        }).select('name email role mobile teamLevel seniorId');
+        const users = candidates.filter(u =>
+            canAssignByMatrix(matrix, req.user, u) && (!role || u.role === role.toLowerCase())
+        );
+        res.json(withMeta ? { users, customRule: isRowCustom(matrix, req.user) } : users);
     } catch (error) {
         console.error('Error fetching assignable users:', error);
         res.status(500).json({ message: 'Error fetching assignable users', error: error.message });
@@ -359,16 +347,13 @@ exports.updateTask = async (req, res) => {
             return res.status(403).json({ message: 'Team members can only edit their own or their juniors tasks' });
         }
 
-        // If admin or team, check if assigning to superadmin
-        if (assignedTo && ['admin', 'team'].includes(currentUserRole)) {
+        // Assignee badla ho to check karo ki naye insaan ko task de sakte hain
+        if (assignedTo && ['admin', 'team'].includes(currentUserRole) && String(assignedTo) !== String(task.assignedTo)) {
             const targetUser = await User.findById(assignedTo);
-            if (targetUser && targetUser.role === 'superadmin') {
-                return res.status(403).json({ message: 'Cannot assign tasks to Super Admin' });
-            }
-            if (currentUserRole === 'team' && targetUser && targetUser.role === 'team'
-                && targetUser._id.toString() !== currentUserId.toString()
-                && !(await getJuniorIds(currentUserId)).includes(targetUser._id.toString())) {
-                return res.status(403).json({ message: 'Team members can only assign tasks to themselves or their juniors' });
+            if (targetUser) {
+                if (!canAssignByMatrix(await getAssignMatrix(), req.user, targetUser)) {
+                    return res.status(403).json({ message: 'You are not allowed to assign tasks to this user' });
+                }
             }
         }
 
