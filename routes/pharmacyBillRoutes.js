@@ -5,12 +5,24 @@ const PharmacyBill = require('../models/PharmacyBill');
 const Medicine = require('../models/Medicine');
 const Invoice = require('../models/Invoice');
 const StockOut = require('../models/StockOut');
+const Expense = require('../models/Expense');
+const Collection = require('../models/Collection');
+const OpeningBalance = require('../models/OpeningBalance');
 const authMiddleware = require('../middleware/authMiddleware');
 const { getUserPermissions, checkPermission } = require('../utils/permissions');
 
 const denied = (res) => res.status(403).json({ message: 'You do not have permission to do this' });
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const round2 = (n) => Math.round(n * 100) / 100;
+// Payments & Finances ke accounts
+const ACCOUNTS = ['Cash', 'Company Bank', 'Personal Bank'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Finance ke expenses me date "30 Oct 2026" format me rehti hai
+const financeDate = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return `${d} ${MONTHS[m - 1]} ${y}`;
+};
+const expenseParty = (bill) => `${bill.supplierName}${bill.billNumber ? ` (Bill ${bill.billNumber})` : ''}`;
 
 router.use(authMiddleware);
 
@@ -88,15 +100,54 @@ const readPayment = (body, pending, userId) => {
     if (!Number.isFinite(amount) || amount <= 0) return { error: 'Please enter a valid payment amount' };
     if (amount > pending) return { error: `Payment cannot be more than the pending amount (${pending})` };
     if (!DATE_RE.test(body.date || '')) return { error: 'Please select the payment date' };
+    if (!ACCOUNTS.includes(body.account)) return { error: 'Please select the account the payment was made from' };
     return {
         payment: {
             amount,
             date: body.date,
             note: (body.note || '').trim(),
+            account: body.account,
             createdBy: userId
         }
     };
 };
+
+// Payment ko Finance ke Expenses me daalna (category "Pharmacy Purchase"), payment.expense me uska id
+const addPaymentExpense = async (bill, payment) => {
+    const expense = await Expense.create({
+        date: financeDate(payment.date),
+        party: expenseParty(bill),
+        amount: payment.amount,
+        category: 'Pharmacy Purchase',
+        account: payment.account,
+        notes: payment.note,
+        pharmacyBill: bill._id
+    });
+    payment.expense = expense._id;
+    return expense;
+};
+
+// Account me kitna paisa bacha: opening balance + collections - expenses (Payments & Finances jaisa hi)
+router.get('/account-balances', requirePermission('pharmacy-bills'), async (req, res) => {
+    try {
+        const [opening, collections, expenses] = await Promise.all([
+            OpeningBalance.findOne(),
+            Collection.find().select('account amount'),
+            Expense.find().select('account amount')
+        ]);
+        const balances = {
+            'Cash': opening?.cash || 0,
+            'Personal Bank': opening?.personal || 0,
+            'Company Bank': opening?.company || 0
+        };
+        collections.forEach(c => { if (c.account in balances) balances[c.account] += c.amount || 0; });
+        expenses.forEach(e => { if (e.account in balances) balances[e.account] -= e.amount || 0; });
+        Object.keys(balances).forEach(k => { balances[k] = round2(balances[k]); });
+        res.json(balances);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
 
 router.get('/', requirePermission('pharmacy-bills'), async (req, res) => {
     try {
@@ -125,16 +176,24 @@ router.post('/', requirePermission('pharmacy-bills:create'), async (req, res) =>
         }
 
         const bill = new PharmacyBill({ ...fields, createdBy: req.user.userId });
+        let expense = null;
         if (Number(req.body.paidAmount) > 0) {
             const { payment, error: payError } = readPayment({
                 amount: req.body.paidAmount,
                 date: req.body.paymentDate || fields.billDate,
-                note: 'Paid at bill entry'
+                note: 'Paid at bill entry',
+                account: req.body.paymentAccount
             }, fields.totalAmount, req.user.userId);
             if (payError) return res.status(400).json({ message: payError });
+            expense = await addPaymentExpense(bill, payment);
             bill.payments.push(payment);
         }
-        await bill.save();
+        try {
+            await bill.save();
+        } catch (err) {
+            if (expense) await Expense.deleteOne({ _id: expense._id });
+            throw err;
+        }
         await bill.populate('createdBy', 'name');
         res.status(201).json(bill);
     } catch (error) {
@@ -163,6 +222,8 @@ router.put('/:id', requirePermission('pharmacy-bills:edit'), async (req, res) =>
         }
         Object.assign(bill, fields);
         await bill.save();
+        // Supplier / bill no. badla to Finance ke expenses me bhi naam badlo
+        await Expense.updateMany({ pharmacyBill: bill._id }, { party: expenseParty(bill) });
         await bill.populate('createdBy', 'name');
         res.json(bill);
     } catch (error) {
@@ -175,6 +236,7 @@ router.delete('/:id', requirePermission('pharmacy-bills:delete'), async (req, re
         const bill = await findBill(req.params.id, res);
         if (!bill) return;
         await bill.deleteOne();
+        await Expense.deleteMany({ pharmacyBill: bill._id });
         res.json({ message: 'Bill deleted' });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -188,8 +250,14 @@ router.post('/:id/payments', requirePermission('pharmacy-bills:payment'), async 
         if (!bill) return;
         const { payment, error } = readPayment(req.body, bill.pendingAmount, req.user.userId);
         if (error) return res.status(400).json({ message: error });
+        const expense = await addPaymentExpense(bill, payment);
         bill.payments.push(payment);
-        await bill.save();
+        try {
+            await bill.save();
+        } catch (err) {
+            await Expense.deleteOne({ _id: expense._id });
+            throw err;
+        }
         await bill.populate('createdBy', 'name');
         res.status(201).json(bill);
     } catch (error) {
@@ -204,8 +272,10 @@ router.delete('/:id/payments/:paymentId', requirePermission('pharmacy-bills:paym
         if (!bill) return;
         const payment = bill.payments.id(req.params.paymentId);
         if (!payment) return res.status(404).json({ message: 'Payment not found' });
+        const expenseId = payment.expense;
         payment.deleteOne();
         await bill.save();
+        if (expenseId) await Expense.deleteOne({ _id: expenseId });
         await bill.populate('createdBy', 'name');
         res.json(bill);
     } catch (error) {

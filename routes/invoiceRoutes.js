@@ -7,6 +7,8 @@ const auth = require('../middleware/authMiddleware');
 const { hasPermission } = require('../utils/permissions');
 
 const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permission nahi hai' });
+const ACCOUNTS = ['Cash', 'Company Bank', 'Personal Bank'];
+const round2 = (n) => Math.round(n * 100) / 100;
 
 // Sale me bechi medicines: [{ medicine, name, qty }]. Custom (list ke bahar) medicine ka id null.
 const cleanMedicineItems = (list) => {
@@ -29,18 +31,46 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
+// Sale entry ke waqt hi paisa mil gaya ho to body.receivedAmount + body.receivedAccount:
+// invoice ka balance kam hota hai aur us account me Collection ban jata hai
 router.post('/', auth, async (req, res) => {
     try {
+        const { receivedAmount, receivedAccount, ...body } = req.body;
+        const received = round2(Number(receivedAmount) || 0);
+        if (received < 0) return res.status(400).json({ message: 'Please enter a valid received amount' });
+        if (received > 0) {
+            if (!(await hasPermission(req.user, 'payments:collect'))) return denied(res);
+            if (!ACCOUNTS.includes(receivedAccount)) return res.status(400).json({ message: 'Please select the account the payment was received in' });
+            if (received > Number(body.total)) return res.status(400).json({ message: 'Received amount cannot be more than the total' });
+            body.balance = round2(Number(body.total) - received);
+            body.status = body.balance <= 0 ? 'Cleared' : 'Pending';
+        }
         const newInvoice = new Invoice({
-            ...req.body,
-            medicineItems: cleanMedicineItems(req.body.medicineItems),
+            ...body,
+            medicineItems: cleanMedicineItems(body.medicineItems),
             createdBy: req.user.userId,
             createdByName: req.user.name,
             commissionAdded: false,
             commissionAmount: 0
         });
         const savedInvoice = await newInvoice.save();
-        res.status(201).json(savedInvoice);
+        let collection = null;
+        if (received > 0) {
+            try {
+                collection = await Collection.create({
+                    date: savedInvoice.date,
+                    party: savedInvoice.client,
+                    amount: received,
+                    category: 'Sale',
+                    account: receivedAccount,
+                    invoiceId: savedInvoice._id
+                });
+            } catch (err) {
+                await savedInvoice.deleteOne();
+                throw err;
+            }
+        }
+        res.status(201).json({ ...savedInvoice.toObject(), collection });
     } catch (err) {
         res.status(400).json({ message: err.message });
     }

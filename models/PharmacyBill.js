@@ -5,6 +5,10 @@ const paymentSchema = new mongoose.Schema({
     amount: { type: Number, required: true, min: 0.01 },
     date: { type: String, required: true }, // YYYY-MM-DD
     note: { type: String, default: '', trim: true },
+    // Kis account se diya (Finance ke accounts). Purane payments me khali.
+    account: { type: String, default: '' },
+    // Finance me bana Expense, payment hatane par wo bhi hatta hai
+    expense: { type: mongoose.Schema.Types.ObjectId, ref: 'Expense', default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
