@@ -9,6 +9,7 @@ const Expense = require('../models/Expense');
 const Collection = require('../models/Collection');
 const OpeningBalance = require('../models/OpeningBalance');
 const authMiddleware = require('../middleware/authMiddleware');
+const { findOrCreateByName } = require('../controllers/medicineController');
 const { getUserPermissions, checkPermission } = require('../utils/permissions');
 
 const denied = (res) => res.status(403).json({ message: 'You do not have permission to do this' });
@@ -77,11 +78,13 @@ const readStockItems = async (list) => {
     const stockItems = [];
     for (const raw of list) {
         if (!raw) continue;
-        const med = medMap[String(raw.medicine)];
+        let med = medMap[String(raw.medicine)];
         const name = (med ? med.name : String(raw.name || '')).trim();
         const qty = Number(raw.qty);
         if (!name) return { error: 'Please select or type the medicine name for every row' };
         if (!Number.isFinite(qty) || qty <= 0) return { error: `Please enter a valid quantity for ${name}` };
+        // Naam type kiya (list se nahi chuna) to medicine list me bana do, taaki packages / appointment me bhi aaye
+        if (!med) med = (await findOrCreateByName(name)).medicine;
         stockItems.push({
             medicine: med ? med._id : null,
             name,
