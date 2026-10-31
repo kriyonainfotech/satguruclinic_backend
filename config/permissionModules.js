@@ -141,11 +141,7 @@ const PERMISSION_MODULES = [
             { key: 'service-delete', label: 'Delete Service', defaults: { admin: true, team: true } },
             { key: 'package-add', label: 'Add Package', defaults: { admin: true, team: true } },
             { key: 'package-edit', label: 'Edit Package', defaults: { admin: true, team: true } },
-            { key: 'package-delete', label: 'Delete Package', defaults: { admin: true, team: true } },
-            { key: 'medicine-add', label: 'Add Medicine', defaults: { admin: true, team: true } },
-            { key: 'medicine-edit', label: 'Edit Medicine', defaults: { admin: true, team: true } },
-            { key: 'medicine-delete', label: 'Delete Medicine', defaults: { admin: true, team: true } },
-            { key: 'medicine-price', label: 'View Medicine Price', defaults: { admin: true, team: false } }
+            { key: 'package-delete', label: 'Delete Package', defaults: { admin: true, team: true } }
         ]
     },
     {
@@ -220,7 +216,11 @@ const PERMISSION_MODULES = [
             { key: 'payment', label: 'Add / Remove Payment', defaults: { admin: true, team: true } },
             { key: 'stock-add', label: 'Add Medicine Qty (in Bill)', defaults: { admin: true, team: true } },
             { key: 'stock-tracking', label: 'Medicine Stock Tracking', defaults: { admin: true, team: true } },
-            { key: 'stock-manual', label: 'Manual Stock Out (without Sale Entry)', defaults: { admin: true, team: false } }
+            { key: 'stock-manual', label: 'Manual Stock Out (without Sale Entry)', defaults: { admin: true, team: false } },
+            { key: 'medicine-add', label: 'Add Medicine', defaults: { admin: true, team: true } },
+            { key: 'medicine-edit', label: 'Edit Medicine', defaults: { admin: true, team: true } },
+            { key: 'medicine-delete', label: 'Delete Medicine', defaults: { admin: true, team: true } },
+            { key: 'medicine-price', label: 'View Medicine Price', defaults: { admin: true, team: false } }
         ]
     },
     {

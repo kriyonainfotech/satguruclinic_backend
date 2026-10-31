@@ -5,7 +5,7 @@ const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permi
 
 exports.createMedicine = async (req, res) => {
     try {
-        if (!(await hasPermission(req.user, 'services:medicine-add'))) return denied(res);
+        if (!(await hasPermission(req.user, 'pharmacy-bills:medicine-add'))) return denied(res);
         const newMedicine = new Medicine(req.body);
         await newMedicine.save();
         res.status(201).json(newMedicine);
@@ -25,7 +25,7 @@ exports.getMedicines = async (req, res) => {
 
 exports.updateMedicine = async (req, res) => {
     try {
-        if (!(await hasPermission(req.user, 'services:medicine-edit'))) return denied(res);
+        if (!(await hasPermission(req.user, 'pharmacy-bills:medicine-edit'))) return denied(res);
         const { id } = req.params;
         const updatedMedicine = await Medicine.findByIdAndUpdate(
             id,
@@ -43,7 +43,7 @@ exports.updateMedicine = async (req, res) => {
 
 exports.deleteMedicine = async (req, res) => {
     try {
-        if (!(await hasPermission(req.user, 'services:medicine-delete'))) return denied(res);
+        if (!(await hasPermission(req.user, 'pharmacy-bills:medicine-delete'))) return denied(res);
         const { id } = req.params;
         const deletedMedicine = await Medicine.findByIdAndDelete(id);
         if (!deletedMedicine) {
