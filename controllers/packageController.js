@@ -8,21 +8,34 @@ const denied = (res) => res.status(403).json({ message: 'Aapko ye karne ki permi
 exports.createPackage = async (req, res) => {
     try {
         if (!(await hasPermission(req.user, 'services:package-add'))) return denied(res);
-        const { name, services, medicines, extraServices = [], description } = req.body;
+        const { name, services, medicines, extraServices = [], description, discountPercent = 0, customPrice } = req.body;
         
-        let totalPrice = 0;
+        let originalPrice = 0;
         if (services && services.length > 0) {
             const selectedServices = await Service.find({ _id: { $in: services } });
-            totalPrice += selectedServices.reduce((sum, service) => sum + service.price, 0);
+            originalPrice += selectedServices.reduce((sum, service) => sum + (service.finalPrice !== undefined ? service.finalPrice : service.price), 0);
         }
         
         if (medicines && medicines.length > 0) {
             const selectedMedicines = await Medicine.find({ _id: { $in: medicines } });
-            totalPrice += selectedMedicines.reduce((sum, med) => sum + med.price, 0);
+            medicines.forEach(mId => {
+                const med = selectedMedicines.find(m => m._id.toString() === mId.toString());
+                if (med) originalPrice += (med.price || 0);
+            });
         }
         
         if (extraServices.length > 0) {
-            totalPrice += extraServices.reduce((sum, es) => sum + Number(es.price), 0);
+            originalPrice += extraServices.reduce((sum, es) => sum + Number(es.price || 0), 0);
+        }
+
+        const disc = Math.max(0, Math.min(100, Number(discountPercent) || 0));
+        let totalPrice;
+        if (customPrice !== undefined && customPrice !== null && customPrice !== '') {
+            totalPrice = Number(customPrice);
+        } else if (disc > 0) {
+            totalPrice = Math.round(originalPrice * (1 - disc / 100));
+        } else {
+            totalPrice = originalPrice;
         }
 
         const newPackage = new Package({ 
@@ -31,6 +44,8 @@ exports.createPackage = async (req, res) => {
             medicines,
             extraServices,
             description,
+            originalPrice,
+            discountPercent: disc,
             totalPrice 
         });
         await newPackage.save();
@@ -48,7 +63,25 @@ exports.getPackages = async (req, res) => {
             .populate('services')
             .populate('medicines')
             .sort({ createdAt: -1 });
-        res.json(packages);
+        const mapped = packages.map(p => {
+            const doc = p.toObject();
+            if (doc.discountPercent === undefined) doc.discountPercent = 0;
+            if (!doc.originalPrice || doc.originalPrice === 0) {
+                let sum = 0;
+                if (doc.services) {
+                    sum += doc.services.reduce((acc, s) => acc + (s.finalPrice ?? s.price ?? 0), 0);
+                }
+                if (doc.medicines) {
+                    sum += doc.medicines.reduce((acc, m) => acc + (m.price ?? 0), 0);
+                }
+                if (doc.extraServices) {
+                    sum += doc.extraServices.reduce((acc, es) => acc + (Number(es.price) || 0), 0);
+                }
+                doc.originalPrice = sum > 0 ? sum : doc.totalPrice;
+            }
+            return doc;
+        });
+        res.json(mapped);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching packages', error: error.message });
     }
@@ -58,35 +91,53 @@ exports.updatePackage = async (req, res) => {
     try {
         if (!(await hasPermission(req.user, 'services:package-edit'))) return denied(res);
         const { id } = req.params;
-        const { name, services, medicines, extraServices, description } = req.body;
+        const { name, services, medicines, extraServices, description, discountPercent, customPrice } = req.body;
         
         let updateData = { name, description };
-        
-        if (services !== undefined || medicines !== undefined || extraServices !== undefined) {
-            let totalPrice = 0;
-            
-            const currentPackage = await Package.findById(id);
-            const finalServices = services !== undefined ? services : currentPackage.services;
-            const finalMedicines = medicines !== undefined ? medicines : currentPackage.medicines;
-            const finalExtraServices = extraServices !== undefined ? extraServices : currentPackage.extraServices;
-            
-            if (finalServices && finalServices.length > 0) {
-                const selectedServices = await Service.find({ _id: { $in: finalServices } });
-                totalPrice += selectedServices.reduce((sum, service) => sum + service.price, 0);
-            }
-            if (finalMedicines && finalMedicines.length > 0) {
-                const selectedMedicines = await Medicine.find({ _id: { $in: finalMedicines } });
-                totalPrice += selectedMedicines.reduce((sum, med) => sum + med.price, 0);
-            }
-            if (finalExtraServices && finalExtraServices.length > 0) {
-                totalPrice += finalExtraServices.reduce((sum, es) => sum + Number(es.price), 0);
-            }
-            
-            updateData.totalPrice = totalPrice;
-            if (services !== undefined) updateData.services = services;
-            if (medicines !== undefined) updateData.medicines = medicines;
-            if (extraServices !== undefined) updateData.extraServices = extraServices;
+        const currentPackage = await Package.findById(id);
+        if (!currentPackage) {
+            return res.status(404).json({ message: 'Package not found' });
         }
+
+        const finalServices = services !== undefined ? services : currentPackage.services;
+        const finalMedicines = medicines !== undefined ? medicines : currentPackage.medicines;
+        const finalExtraServices = extraServices !== undefined ? extraServices : currentPackage.extraServices;
+        
+        let originalPrice = 0;
+        if (finalServices && finalServices.length > 0) {
+            const selectedServices = await Service.find({ _id: { $in: finalServices } });
+            originalPrice += selectedServices.reduce((sum, service) => sum + (service.finalPrice !== undefined ? service.finalPrice : service.price), 0);
+        }
+        if (finalMedicines && finalMedicines.length > 0) {
+            const selectedMedicines = await Medicine.find({ _id: { $in: finalMedicines } });
+            finalMedicines.forEach(mId => {
+                const med = selectedMedicines.find(m => m._id.toString() === mId.toString());
+                if (med) originalPrice += (med.price || 0);
+            });
+        }
+        if (finalExtraServices && finalExtraServices.length > 0) {
+            originalPrice += finalExtraServices.reduce((sum, es) => sum + Number(es.price || 0), 0);
+        }
+
+        const disc = discountPercent !== undefined
+            ? Math.max(0, Math.min(100, Number(discountPercent) || 0))
+            : (currentPackage.discountPercent || 0);
+
+        let totalPrice;
+        if (customPrice !== undefined && customPrice !== null && customPrice !== '') {
+            totalPrice = Number(customPrice);
+        } else if (disc > 0) {
+            totalPrice = Math.round(originalPrice * (1 - disc / 100));
+        } else {
+            totalPrice = originalPrice;
+        }
+
+        updateData.originalPrice = originalPrice;
+        updateData.discountPercent = disc;
+        updateData.totalPrice = totalPrice;
+        if (services !== undefined) updateData.services = services;
+        if (medicines !== undefined) updateData.medicines = medicines;
+        if (extraServices !== undefined) updateData.extraServices = extraServices;
 
         const updatedPackage = await Package.findByIdAndUpdate(
             id,
@@ -94,9 +145,6 @@ exports.updatePackage = async (req, res) => {
             { new: true, runValidators: true }
         ).populate('services').populate('medicines');
         
-        if (!updatedPackage) {
-            return res.status(404).json({ message: 'Package not found' });
-        }
         res.json(updatedPackage);
     } catch (error) {
         res.status(500).json({ message: 'Error updating package', error: error.message });

@@ -11,6 +11,17 @@ const serviceSchema = new mongoose.Schema({
         required: true,
         min: 0
     },
+    discountPercent: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    finalPrice: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     description: {
         type: String,
         trim: true
